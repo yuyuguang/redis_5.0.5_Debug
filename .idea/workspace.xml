@@ -2,15 +2,15 @@
 <project version="4">
   <component name="CMakeRunConfigurationManager" shouldGenerate="true" shouldDeleteObsolete="true">
     <generated>
-      <config projectName="redis" targetName="testmodule" />
-      <config projectName="redis" targetName="linenoise" />
-      <config projectName="redis" targetName="helloworld" />
       <config projectName="redis" targetName="lua" />
       <config projectName="redis" targetName="hellotype" />
-      <config projectName="redis" targetName="redis-server" />
-      <config projectName="redis" targetName="redis-cli" />
-      <config projectName="redis" targetName="hiredis" />
+      <config projectName="redis" targetName="linenoise" />
       <config projectName="redis" targetName="helloblock" />
+      <config projectName="redis" targetName="redis-cli" />
+      <config projectName="redis" targetName="helloworld" />
+      <config projectName="redis" targetName="testmodule" />
+      <config projectName="redis" targetName="hiredis" />
+      <config projectName="redis" targetName="redis-server" />
     </generated>
   </component>
   <component name="CMakeSettings">
@@ -29,23 +29,138 @@
   </component>
   <component name="ExecutionTargetManager" SELECTED_TARGET="CMakeBuildProfile:Debug" />
   <component name="FileEditorManager">
-    <leaf>
-      <file pinned="false" current-in-tab="true">
+    <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
+      <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/src/server.c">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="131">
-              <caret line="4038" column="47" selection-start-line="4038" selection-start-column="43" selection-end-line="4038" selection-end-column="47" />
+            <state relative-caret-position="564">
+              <caret line="4063" column="24" lean-forward="true" selection-start-line="4063" selection-start-column="24" selection-end-line="4063" selection-end-column="24" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/server.h">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="201">
+              <caret line="1791" column="11" selection-start-line="1791" selection-start-column="11" selection-end-line="1791" selection-end-column="11" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/zipmap.c">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="124">
+              <caret line="407" column="4" selection-start-line="407" selection-start-column="4" selection-end-line="407" selection-end-column="4" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/t_zset.c">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="395">
+              <caret line="195" column="48" lean-forward="true" selection-start-line="195" selection-start-column="48" selection-end-line="195" selection-end-column="48" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/t_string.c">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="206">
+              <caret line="66" column="5" selection-start-line="66" selection-start-column="5" selection-end-line="66" selection-end-column="5" />
+              <folding>
+                <element signature="e#1611#1630#0" expanded="true" />
+              </folding>
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/t_list.c">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="2060">
+              <caret line="196" column="23" selection-start-line="196" selection-start-column="5" selection-end-line="196" selection-end-column="23" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/t_set.c">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="-1944">
+              <caret line="73" column="98" lean-forward="true" selection-start-line="73" selection-start-column="98" selection-end-line="73" selection-end-column="98" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="true">
+        <entry file="file://$PROJECT_DIR$/src/t_stream.c">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="357">
+              <caret line="57" column="19" lean-forward="true" selection-start-line="57" selection-start-column="19" selection-end-line="57" selection-end-column="19" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/t_hash.c">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="-2295">
+              <caret line="541" column="24" selection-start-line="541" selection-start-column="24" selection-end-line="541" selection-end-column="24" />
             </state>
           </provider>
         </entry>
       </file>
     </leaf>
   </component>
+  <component name="FindInProjectRecents">
+    <findStrings>
+      <find>zipmap</find>
+      <find>test</find>
+      <find>skipli</find>
+      <find>zipmapEncodeLength</find>
+      <find>skiplist</find>
+      <find>zmlen</find>
+      <find>zslCreate</find>
+      <find>ele</find>
+      <find>zslFree</find>
+      <find>sds</find>
+      <find>zslInsert</find>
+      <find>sdsele</find>
+      <find>sdsnew</find>
+      <find>ZSKIPLIST_P</find>
+      <find>randomLevel=</find>
+      <find>update[1]-&gt;level[1]</find>
+      <find>randomLevel</find>
+      <find>main(</find>
+      <find>zskiplistLevel</find>
+      <find>struct zskiplistLevel</find>
+      <find>rank</find>
+      <find>zslRandomLevel</find>
+      <find>setGenericCommand</find>
+      <find>hashTypeDelete</find>
+      <find>zslRandomLevel2</find>
+      <find>hashTypeGetValueObject</find>
+    </findStrings>
+  </component>
+  <component name="IdeDocumentHistory">
+    <option name="CHANGED_PATHS">
+      <list>
+        <option value="$PROJECT_DIR$/src/server.h" />
+        <option value="$PROJECT_DIR$/src/server.c" />
+        <option value="$PROJECT_DIR$/src/t_zset.c" />
+      </list>
+    </option>
+  </component>
+  <component name="OCFindUsagesOptions" text="true" ivars="false" properties="true" derivedClasses="false" />
   <component name="ProjectFrameBounds">
-    <option name="x" value="21" />
+    <option name="x" value="34" />
     <option name="y" value="23" />
-    <option name="width" value="1366" />
-    <option name="height" value="787" />
+    <option name="width" value="1385" />
+    <option name="height" value="790" />
   </component>
   <component name="ProjectView">
     <navigator proportions="" version="1">
@@ -124,7 +239,7 @@
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="redis-server-test" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="test zipmap" PASS_PARENT_ENVS_2="true" PROJECT_NAME="redis" TARGET_NAME="redis-server" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="redis" RUN_TARGET_NAME="redis-server">
+    <configuration name="redis-server-test" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="test endianconv" PASS_PARENT_ENVS_2="true" PROJECT_NAME="redis" TARGET_NAME="redis-server" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="redis" RUN_TARGET_NAME="redis-server">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
@@ -153,46 +268,358 @@
     </list>
   </component>
   <component name="ToolWindowManager">
-    <frame x="21" y="23" width="1366" height="787" extended-state="0" />
+    <frame x="34" y="23" width="1385" height="790" extended-state="0" />
     <editor active="true" />
     <layout>
-      <window_info id="Favorites" side_tool="true" />
-      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.25" />
+      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.26433358" />
       <window_info id="Structure" order="1" side_tool="true" weight="0.25" />
-      <window_info anchor="bottom" id="Database Changes" />
-      <window_info anchor="bottom" id="Version Control" />
-      <window_info anchor="bottom" id="Messages" weight="0.3294964" />
-      <window_info anchor="bottom" id="Event Log" side_tool="true" />
-      <window_info anchor="bottom" id="CMake" />
+      <window_info id="Favorites" order="2" side_tool="true" />
       <window_info anchor="bottom" id="Message" order="0" />
       <window_info anchor="bottom" id="Find" order="1" />
-      <window_info anchor="bottom" id="Run" order="2" visible="true" weight="0.36978418" />
-      <window_info anchor="bottom" id="Debug" order="3" weight="0.4" />
+      <window_info anchor="bottom" id="Run" order="2" weight="0.1266187" />
+      <window_info anchor="bottom" id="Debug" order="3" weight="0.3566334" />
       <window_info anchor="bottom" id="Cvs" order="4" weight="0.25" />
       <window_info anchor="bottom" id="Inspection" order="5" weight="0.4" />
       <window_info anchor="bottom" id="TODO" order="6" />
-      <window_info anchor="right" id="Database" />
+      <window_info anchor="bottom" id="Version Control" order="7" />
+      <window_info anchor="bottom" id="Database Changes" order="8" />
+      <window_info anchor="bottom" id="CMake" order="9" />
+      <window_info anchor="bottom" id="Event Log" order="10" side_tool="true" />
+      <window_info anchor="bottom" id="Messages" order="11" visible="true" weight="0.042979944" />
       <window_info anchor="right" id="Commander" internal_type="SLIDING" order="0" type="SLIDING" weight="0.4" />
       <window_info anchor="right" id="Ant Build" order="1" weight="0.25" />
       <window_info anchor="right" content_ui="combo" id="Hierarchy" order="2" weight="0.25" />
+      <window_info anchor="right" id="Database" order="3" />
     </layout>
   </component>
   <component name="XDebuggerManager">
-    <breakpoint-manager>
-      <breakpoints>
-        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
-          <url>file://$PROJECT_DIR$/src/server.c</url>
-          <line>4039</line>
-          <option name="timeStamp" value="1" />
-        </line-breakpoint>
-      </breakpoints>
-    </breakpoint-manager>
+    <watches-manager>
+      <configuration name="CMakeRunConfiguration">
+        <watch expression="ZSKIPLIST_P * 0xFFFF" language="ObjectiveC" />
+        <watch expression="rank[0]" language="ObjectiveC" />
+        <watch expression="rank[1]" />
+        <watch expression="update[0]-&gt;level[0].span" language="ObjectiveC" />
+        <watch expression="update[1]-&gt;level[1].span" language="ObjectiveC" />
+        <watch expression="rank[0]" language="ObjectiveC" />
+        <watch expression="x-&gt;level[i].span" language="ObjectiveC" />
+        <watch expression="zsl-&gt;length" language="ObjectiveC" />
+        <watch expression="update[0] == zsl-&gt;header" language="ObjectiveC" />
+        <watch expression="x-&gt;backward" language="ObjectiveC" />
+        <watch expression="zsl-&gt;level" language="ObjectiveC" />
+        <watch expression="x-&gt;level[i].forward" language="ObjectiveC" />
+      </configuration>
+    </watches-manager>
+  </component>
+  <component name="debuggerHistoryManager">
+    <expressions id="watch">
+      <expression>
+        <expression-string>x-&gt;level[i].forward</expression-string>
+        <language-id>ObjectiveC</language-id>
+        <evaluation-mode>EXPRESSION</evaluation-mode>
+      </expression>
+      <expression>
+        <expression-string>rank[0]</expression-string>
+        <language-id>ObjectiveC</language-id>
+        <evaluation-mode>EXPRESSION</evaluation-mode>
+      </expression>
+      <expression>
+        <expression-string>update[1]-&gt;level[1].span</expression-string>
+        <language-id>ObjectiveC</language-id>
+        <evaluation-mode>EXPRESSION</evaluation-mode>
+      </expression>
+      <expression>
+        <expression-string>update[0]-&gt;level[0].span</expression-string>
+        <language-id>ObjectiveC</language-id>
+        <evaluation-mode>EXPRESSION</evaluation-mode>
+      </expression>
+      <expression>
+        <expression-string>rank[1]</expression-string>
+        <language-id>ObjectiveC</language-id>
+        <evaluation-mode>EXPRESSION</evaluation-mode>
+      </expression>
+      <expression>
+        <expression-string>zsl-&gt;length</expression-string>
+        <language-id>ObjectiveC</language-id>
+        <evaluation-mode>EXPRESSION</evaluation-mode>
+      </expression>
+      <expression>
+        <expression-string>update[0]-&gt;level[i].span</expression-string>
+        <language-id>ObjectiveC</language-id>
+        <evaluation-mode>EXPRESSION</evaluation-mode>
+      </expression>
+      <expression>
+        <expression-string>random()&amp;0xFFFF</expression-string>
+        <language-id>ObjectiveC</language-id>
+        <evaluation-mode>EXPRESSION</evaluation-mode>
+      </expression>
+      <expression>
+        <expression-string>ZSKIPLIST_P * 0xFFFF</expression-string>
+        <language-id>ObjectiveC</language-id>
+        <evaluation-mode>EXPRESSION</evaluation-mode>
+      </expression>
+      <expression>
+        <expression-string>rank[i]</expression-string>
+        <language-id>ObjectiveC</language-id>
+        <evaluation-mode>EXPRESSION</evaluation-mode>
+      </expression>
+    </expressions>
   </component>
   <component name="editorHistoryManager">
+    <entry file="file://$PROJECT_DIR$/src/crc64.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="457">
+          <caret line="187" column="4" selection-start-line="187" selection-start-column="4" selection-end-line="187" selection-end-column="4" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/util.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="608">
+          <caret line="846" column="4" selection-start-line="846" selection-start-column="4" selection-end-line="846" selection-end-column="4" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/sha1.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="194">
+          <caret line="203" column="4" selection-start-line="203" selection-start-column="4" selection-end-line="203" selection-end-column="4" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/aof.c">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/release.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/release.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-165" />
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/redismodule.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-1724" />
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/pqsort.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-45" />
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/mkreleasehdr.sh">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/latency.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-840" />
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/latency.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-1508" />
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/endianconv.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-510" />
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/dict.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-2280" />
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/dict.c">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/debug.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-1789" />
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/atomicvar.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="151">
+          <caret line="78" column="8" selection-start-line="78" selection-start-column="8" selection-end-line="78" selection-end-column="8" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/endianconv.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="168">
+          <caret line="114" column="8" selection-start-line="114" selection-start-column="8" selection-end-line="114" selection-end-column="8" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file:///usr/include/math.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="143">
+          <caret line="177" column="8" selection-start-line="177" selection-start-column="8" selection-end-line="177" selection-end-column="8" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/cluster.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="126">
+          <caret line="325" column="19" selection-start-line="325" selection-start-column="19" selection-end-line="325" selection-end-column="19" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rdb.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="216">
+          <caret line="1464" column="23" selection-start-line="1464" selection-start-column="12" selection-end-line="1464" selection-end-column="23" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/sds.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="147">
+          <caret line="1228" column="12" selection-start-line="1228" selection-start-column="12" selection-end-line="1228" selection-end-column="26" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/deps/hiredis/sds.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="441">
+          <caret line="764" column="4" selection-start-line="764" selection-start-column="4" selection-end-line="764" selection-end-column="4" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/zmalloc.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="441">
+          <caret line="198" selection-start-line="198" selection-end-line="198" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/quicklist.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-203">
+          <caret line="15" column="30" lean-forward="true" selection-start-line="11" selection-start-column="15" selection-end-line="15" selection-end-column="30" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/quicklist.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="214">
+          <caret line="1403" column="5" selection-start-line="1403" selection-start-column="5" selection-end-line="1403" selection-end-column="5" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file:///usr/include/stdlib.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="209">
+          <caret line="169" column="9" selection-start-line="169" selection-start-column="9" selection-end-line="169" selection-end-column="9" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/ziplist.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="214">
+          <caret line="992" column="15" selection-start-line="992" selection-start-column="15" selection-end-line="992" selection-end-column="15" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/object.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="201">
+          <caret line="259" column="6" selection-start-line="259" selection-start-column="6" selection-end-line="259" selection-end-column="6" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/db.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="213">
+          <caret line="1075" column="5" selection-start-line="1075" selection-start-column="5" selection-end-line="1075" selection-end-column="5" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/syncio.c">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/stream.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-1154" />
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/ziplist.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/zipmap.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/zipmap.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="124">
+          <caret line="407" column="4" selection-start-line="407" selection-start-column="4" selection-end-line="407" selection-end-column="4" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/t_zset.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="395">
+          <caret line="195" column="48" lean-forward="true" selection-start-line="195" selection-start-column="48" selection-end-line="195" selection-end-column="48" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/t_string.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="206">
+          <caret line="66" column="5" selection-start-line="66" selection-start-column="5" selection-end-line="66" selection-end-column="5" />
+          <folding>
+            <element signature="e#1611#1630#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/t_set.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-1944">
+          <caret line="73" column="98" lean-forward="true" selection-start-line="73" selection-start-column="98" selection-end-line="73" selection-end-column="98" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/sort.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="989">
+          <caret line="116" column="12" selection-start-line="116" selection-start-column="12" selection-end-line="116" selection-end-column="12" />
+        </state>
+      </provider>
+    </entry>
     <entry file="file://$PROJECT_DIR$/src/server.c">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="131">
-          <caret line="4038" column="47" selection-start-line="4038" selection-start-column="43" selection-end-line="4038" selection-end-column="47" />
+        <state relative-caret-position="564">
+          <caret line="4063" column="24" lean-forward="true" selection-start-line="4063" selection-start-column="24" selection-end-line="4063" selection-end-column="24" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/server.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="201">
+          <caret line="1791" column="11" selection-start-line="1791" selection-start-column="11" selection-end-line="1791" selection-end-column="11" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/t_hash.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-2295">
+          <caret line="541" column="24" selection-start-line="541" selection-start-column="24" selection-end-line="541" selection-end-column="24" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/t_list.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="2060">
+          <caret line="196" column="23" selection-start-line="196" selection-start-column="5" selection-end-line="196" selection-end-column="23" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/t_stream.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="357">
+          <caret line="57" column="19" lean-forward="true" selection-start-line="57" selection-start-column="19" selection-end-line="57" selection-end-column="19" />
         </state>
       </provider>
     </entry>

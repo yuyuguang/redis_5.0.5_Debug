@@ -4034,6 +4034,23 @@ int main(int argc, char **argv) {
 //    is = intsetRemove(is, 12345678901, &success);
 //    zfree(is);
 //    return 1;
+
+//    zskiplist* zsl = zslCreate();
+//    zskiplistNode *znode = NULL;
+//    char buffer[64];
+//    for(int i = 1; i < 100; ++i) {
+//        sprintf(buffer, "%d", i);
+//        znode = zslInsert(zsl, i, sdsnew(buffer));
+//    }
+////    for(int i = 10000; i > 0; i -= 10) {
+////        sprintf(buffer, "%d", i);
+////        znode = zslInsert(zsl, i, sdsnew(buffer));
+////    }
+//
+//    sprintf(buffer, "%d", 10000);
+//    zslDelete(zsl, 10000, sdsnew(buffer), NULL);
+//    zslFree(zsl);
+//    return 1;
     // test end
 #ifdef REDIS_TEST
     if (argc == 3 && !strcasecmp(argv[1], "test")) {
