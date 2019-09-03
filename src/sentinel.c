@@ -4499,11 +4499,28 @@ void sentinelCheckTiltCondition(void) {
     sentinel.previous_time = mstime();
 }
 
+// Sentinel主函数
 void sentinelTimer(void) {
+//    printf("sentinelTimer %lld\n", mstime());
+    // 记录本次 sentinel 调用的事件， 并判断是否需要进入 TITL 模式
     sentinelCheckTiltCondition();
+
+    // 执行定期操作
+    // 比如 PING 实例、分析主服务器和从服务器的 INFO 命令
+    // 向其他监视相同主服务器的 sentinel 发送问候信息
+    // 并接收其他 sentinel 发来的问候信息
+    // 执行故障转移操作，等等
+    size_t mastersSize = dictSize(sentinel.masters);
+    printf("mastersSize=%zu\n", dictSize(sentinel.masters));
     sentinelHandleDictOfRedisInstances(sentinel.masters);
+
+    // 运行等待执行的脚本
     sentinelRunPendingScripts();
+
+    // 清理已执行完毕的脚本，并重试出错的脚本
     sentinelCollectTerminatedScripts();
+
+    // 杀死运行超时的脚本
     sentinelKillTimedoutScripts();
 
     /* We continuously change the frequency of the Redis "timer interrupt"

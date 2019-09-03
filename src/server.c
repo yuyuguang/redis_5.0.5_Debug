@@ -4012,16 +4012,21 @@ int main(int argc, char **argv) {
     struct timeval tv;
     int j;
     // test start
+//#define RAX_DEBUG_MSG 123
+//    raxSetDebugMsg(1);
 //    rax* testRax = raxNew();
-//    char* a1 = "abcde";
-//    char* a2 = "abcmn";
-//    char* a3 = "abcrs";
-//    raxInsert(testRax, (unsigned char*)a1, strlen(a1), a1, NULL);
-//    raxInsert(testRax, (unsigned char*)a2, strlen(a2), a2, NULL);
-//    raxInsert(testRax, (unsigned char*)a3, strlen(a3), a3, NULL);
-//    char* a4 = "abc";
-//    raxRemove(testRax, (unsigned char*)a4, strlen(a4), NULL);
-//    raxRemove(testRax, (unsigned char*)a2, strlen(a2), NULL);
+//    char* a1 = "abcd";
+////    raxInsert(testRax, (unsigned char*)a1, strlen(a1), "efgh", NULL);
+//    raxInsert(testRax, (unsigned char*)a1, strlen(a1), NULL, NULL);
+//    raxShow(testRax);
+////    char* a2 = "abcmn";
+////    char* a3 = "abcrs";
+////    raxInsert(testRax, (unsigned char*)a1, strlen(a1), a1, NULL);
+////    raxInsert(testRax, (unsigned char*)a2, strlen(a2), a2, NULL);
+////    raxInsert(testRax, (unsigned char*)a3, strlen(a3), a3, NULL);
+////    char* a4 = "abc";
+////    raxRemove(testRax, (unsigned char*)a4, strlen(a4), NULL);
+////    raxRemove(testRax, (unsigned char*)a2, strlen(a2), NULL);
 //    raxFree(testRax);
 //    return 1;
 
