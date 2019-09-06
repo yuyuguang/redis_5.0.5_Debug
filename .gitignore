@@ -24,9 +24,9 @@ redis.ds
 deps/lua/src/lua
 deps/lua/src/luac
 deps/lua/src/liblua.a
-.make-*
+#.make-*
 .prerequisites
 *.dSYM
-Makefile.dep
+#Makefile.dep
 #.idea
 cmake-build-debug
