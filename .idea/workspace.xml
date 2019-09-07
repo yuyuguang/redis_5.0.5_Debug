@@ -20,8 +20,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="75daa373-c35d-4a09-8f3a-e1ee94488710" name="Default Changelist" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/release.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/release.h" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -70,7 +70,7 @@
       </list>
     </option>
   </component>
-  <component name="RunManager" selected="CMake Application.helloblock">
+  <component name="RunManager" selected="CMake Application.redis-server-cluster">
     <configuration name="helloblock" type="CMakeRunConfiguration" factoryName="Application" PASS_PARENT_ENVS_2="true" PROJECT_NAME="redis" TARGET_NAME="helloblock" CONFIG_NAME="Debug">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
@@ -106,6 +106,11 @@
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
+    <configuration name="redis-server-cluster" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="../../clusterConf/redis.port.6579.conf" PASS_PARENT_ENVS_2="true" PROJECT_NAME="redis" TARGET_NAME="redis-server" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="redis" RUN_TARGET_NAME="redis-server">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
     <configuration name="redis-server-test" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="test endianconv" PASS_PARENT_ENVS_2="true" PROJECT_NAME="redis" TARGET_NAME="redis-server" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="redis" RUN_TARGET_NAME="redis-server">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
@@ -128,6 +133,7 @@
       <item itemvalue="CMake Application.hiredis" />
       <item itemvalue="CMake Application.linenoise" />
       <item itemvalue="CMake Application.lua" />
+      <item itemvalue="CMake Application.redis-server-cluster" />
       <item itemvalue="CMake Application.redis-cli" />
       <item itemvalue="CMake Application.redis-server" />
       <item itemvalue="CMake Application.redis-server-test" />
@@ -147,6 +153,9 @@
       <workItem from="1567689238117" duration="559000" />
       <workItem from="1567739829274" duration="216000" />
       <workItem from="1567751998342" duration="2950000" />
+      <workItem from="1567760612778" duration="10303000" />
+      <workItem from="1567828641301" duration="9069000" />
+      <workItem from="1567855591224" duration="4000" />
     </task>
     <servers />
   </component>
@@ -304,6 +313,31 @@
           <line>4514</line>
           <option name="timeStamp" value="55" />
         </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/cluster.c</url>
+          <line>4225</line>
+          <option name="timeStamp" value="62" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/cluster.c</url>
+          <line>463</line>
+          <option name="timeStamp" value="63" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/cluster.c</url>
+          <line>3384</line>
+          <option name="timeStamp" value="64" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/cluster.c</url>
+          <line>1660</line>
+          <option name="timeStamp" value="66" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/cluster.c</url>
+          <line>1791</line>
+          <option name="timeStamp" value="67" />
+        </line-breakpoint>
       </breakpoints>
     </breakpoint-manager>
     <watches-manager>
@@ -315,61 +349,9 @@
         <watch expression="SENTINEL_INFO_PERIOD" language="ObjectiveC" />
         <watch expression="SENTINEL_PING_PERIOD" language="ObjectiveC" />
         <watch expression="sentinel.announce_port" language="ObjectiveC" />
+        <watch expression="argv[1]" language="ObjectiveC" />
+        <watch expression="server.cfd" language="ObjectiveC" />
       </configuration>
     </watches-manager>
-  </component>
-  <component name="debuggerHistoryManager">
-    <expressions id="watch">
-      <expression>
-        <expression-string>sentinel.announce_port</expression-string>
-        <language-id>ObjectiveC</language-id>
-        <evaluation-mode>EXPRESSION</evaluation-mode>
-      </expression>
-      <expression>
-        <expression-string>SENTINEL_PING_PERIOD</expression-string>
-        <language-id>ObjectiveC</language-id>
-        <evaluation-mode>EXPRESSION</evaluation-mode>
-      </expression>
-      <expression>
-        <expression-string>SENTINEL_INFO_PERIOD</expression-string>
-        <language-id>ObjectiveC</language-id>
-        <evaluation-mode>EXPRESSION</evaluation-mode>
-      </expression>
-      <expression>
-        <expression-string>ri-&gt;link-&gt;disconnected</expression-string>
-        <language-id>ObjectiveC</language-id>
-        <evaluation-mode>EXPRESSION</evaluation-mode>
-      </expression>
-      <expression>
-        <expression-string>ri-&gt;addr-&gt;port</expression-string>
-        <language-id>ObjectiveC</language-id>
-        <evaluation-mode>EXPRESSION</evaluation-mode>
-      </expression>
-      <expression>
-        <expression-string>ri-&gt;addr-&gt;ip</expression-string>
-        <language-id>ObjectiveC</language-id>
-        <evaluation-mode>EXPRESSION</evaluation-mode>
-      </expression>
-      <expression>
-        <expression-string>link-&gt;cc</expression-string>
-        <language-id>ObjectiveC</language-id>
-        <evaluation-mode>EXPRESSION</evaluation-mode>
-      </expression>
-      <expression>
-        <expression-string>now - ri-&gt;link-&gt;last_reconn_time</expression-string>
-        <language-id>ObjectiveC</language-id>
-        <evaluation-mode>EXPRESSION</evaluation-mode>
-      </expression>
-      <expression>
-        <expression-string>argv[1]</expression-string>
-        <language-id>ObjectiveC</language-id>
-        <evaluation-mode>EXPRESSION</evaluation-mode>
-      </expression>
-      <expression>
-        <expression-string>argv</expression-string>
-        <language-id>ObjectiveC</language-id>
-        <evaluation-mode>EXPRESSION</evaluation-mode>
-      </expression>
-    </expressions>
   </component>
 </project>
