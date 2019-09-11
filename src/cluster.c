@@ -2778,6 +2778,12 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
     /* The slave requesting the vote must have a configEpoch for the claimed
      * slots that is >= the one of the masters currently serving the same
      * slots in the current configuration. */
+    // 接下来，判断发送节点，对其宣称要负责的槽位，是否比之前负责这些槽位的节点，
+    // 具有相等或更新的配置纪元configEpoch：针对16384个槽位，
+    // 只要发送节点宣称要负责该槽位，就判断当前节点记录的，
+    // 该槽位当前的负责节点的configEpoch，是否比发送节点的configEpoch要大，
+    // 若是，说明发送节点的配置信息不是最新的，可能是一个长时间下线的节点又重新上线了，
+    // 这种情况下，不能给他投票，因此直接返回；
     for (j = 0; j < CLUSTER_SLOTS; j++) {
         if (bitmapTestBit(claimed_slots, j) == 0) continue;
         if (server.cluster->slots[j] == NULL ||
@@ -2945,7 +2951,8 @@ void clusterFailoverReplaceYourMaster(void) {
  */
 void clusterHandleSlaveFailover(void) {
     mstime_t data_age;
-    mstime_t auth_age = mstime() - server.cluster->failover_auth_time;
+    // server.cluster->failover_auth_time属性，表示从节点可以开始进行故障转移的时间
+    mstime_t auth_age = mstime() - server.cluster->failover_auth_time; // 该变量表示距离发起故障转移流程，已经过去了多少时间
     int needed_quorum = (server.cluster->size / 2) + 1;
     int manual_failover = server.cluster->mf_end != 0 &&
                           server.cluster->mf_can_start;
@@ -2971,6 +2978,12 @@ void clusterHandleSlaveFailover(void) {
      * 3) We don't have the no failover configuration set, and this is
      *    not a manual failover.
      * 4) It is serving slots. */
+    //接下来判断当前节点是否可以进行故障转移：
+    // 当前节点是主节点；
+    // 当前节点是从节点但是没有主节点；
+    // 当前节点的主节点不处于下线状态并且不是手动强制进行故障转移；
+    // 当前节点的主节点没有负责的槽位。
+    // 满足以上任一条件，则不能进行故障转移，直接返回即可；
     if (nodeIsMaster(myself) ||
         myself->slaveof == NULL ||
         (!nodeFailed(myself->slaveof) && !manual_failover) ||
@@ -3002,6 +3015,15 @@ void clusterHandleSlaveFailover(void) {
      * factor configured by the user.
      *
      * Check bypassed for manual failovers. */
+
+    // 接下来计算，现在距离当前从节点与主节点最后交互的时间data_age，
+    // 也就是当前从节点与主节点已经断链了多长时间。
+    // 如果data_age大于server.cluster_node_timeout，则从data_age中减去server.cluster_node_timeout，
+    // 因为经过server.cluster_node_timeout时间没有收到主节点的PING回复，才会将其标记为PFAIL，
+    // 因此data_age实际上表示：
+    // 在主节点下线之前，当前从节点有多长时间没有与其交互过了。
+    // data_age主要用于判断当前从节点的数据新鲜度；如果data_age超过了一定时间，表示当前从节点的数据已经太老了，不能替换掉下线主节点，
+    // 因此在不是手动强制故障转移的情况下，直接返回；
     if (server.cluster_slave_validity_factor &&
         data_age >
         (((mstime_t)server.repl_ping_slave_period * 1000) +
@@ -3042,6 +3064,7 @@ void clusterHandleSlaveFailover(void) {
         /* Now that we have a scheduled election, broadcast our offset
          * to all the other slaves so that they'll updated their offsets
          * if our offset is better. */
+        // 调用clusterBroadcastPong，向该下线主节点的所有从节点发送PONG包，包头部分带有当前从节点的复制数据量，因此其他从节点收到之后，可以更新自己的排名
         clusterBroadcastPong(CLUSTER_BROADCAST_LOCAL_SLAVES);
         return;
     }
@@ -3054,6 +3077,10 @@ void clusterHandleSlaveFailover(void) {
     if (server.cluster->failover_auth_sent == 0 &&
         server.cluster->mf_end == 0)
     {
+        // 如果还没有开始故障转移，则调用clusterGetSlaveRank，取得当前从节点的最新排名。
+        // 因为在开始故障转移之前，可能会收到其他从节点发来的心跳包，因而可以根据心跳包中的复制偏移量更新本节点的排名，
+        // 获得新排名newrank，如果newrank比之前的排名靠后，则需要增加故障转移开始时间的延迟，
+        // 然后将newrank记录到server.cluster->failover_auth_rank中；
         int newrank = clusterGetSlaveRank();
         if (newrank > server.cluster->failover_auth_rank) {
             long long added_delay =
@@ -3080,6 +3107,12 @@ void clusterHandleSlaveFailover(void) {
 
     /* Ask for votes if needed. */
     if (server.cluster->failover_auth_sent == 0) {
+        // 走到这里，说明可以开始故障转移了。
+        // 因此，首先增加当前节点的currentEpoch的值，表示要开始新一轮选举了。
+        // 此时该从节点的currentEpoch就是所有集群节点中最大的；
+        // 然后将该currentEpoch记录到server.cluster->failover_auth_epoch中；
+        // 然后调用clusterRequestFailoverAuth，向所有集群节点发送CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST包用于拉票；
+        // 置server.cluster->failover_auth_sent为1，表示已发起了故障转移流程；最后直接返回；
         server.cluster->currentEpoch++;
         server.cluster->failover_auth_epoch = server.cluster->currentEpoch;
         serverLog(LL_WARNING,"Starting a failover election for epoch %llu.",
