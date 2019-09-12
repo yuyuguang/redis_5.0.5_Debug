@@ -1,0 +1,2407 @@
+Redis的主从复制功能，可以实现Redis实例的高可用，避免单个Redis 服务器的单点故障，并且可以实现负载均衡。
+
+ 
+
+一：主从复制过程
+
+         Redis的复制功能分为同步(sync)和命令传播(commandpropagate)两个操作：
+
+         同步操作用于将从节点的数据库状态更新至主节点当前所处的数据库状态；
+
+         命令传播操作则用于在主节点的数据库状态被修改，导致主从节点的数据库状态不一致时，让主从节点的数据库重新回到一致状态；
+
+   
+
+1：同步
+
+         当客户端向从节点发送SLAYEOF命令，或者从节点的配置文件中配置了slaveof选项时，从节点首先需要执行同步操作，也就是将从节点的数据库状态更新至主节点当前所处的数据库状态。
+
+         在Redis2.8版本之前，从节点对主节点的同步操作，是通过从节点向主节点发送SYNC命令来完成。过程如下：
+
+         a：从节点向主节点发送SYNC命令；
+
+         b：主节点收到SYNC命令后，执行BGSAVE命令，在后台生成一个RDB文件，并使用一个缓冲区记录从现在开始执行的所有写命令。
+
+         c：当主节点的BGSAVE命令执行完毕时，主节点会将生成的RDB文件发送给从节点，从节点接收并载人这个 RDB文件，将自己的数据库状态更新至主服务器执行BGSAYE命令时的状态。
+
+         d：主节点将记录在缓冲区里面的所有写命令发送给从节点，从节点执行这些写命令，将自己的数据库状态更新至主节点数据库当前所处的状态。
+
+ 
+
+2：命令传播
+
+         在同步操作执行完毕之后，主从服务器两者的数据库将达到一致状态。但当主节点执行客户端发送的写命令时，主从服务器状态将不再一致。
+
+         为了让主从服务器再次回到一致状态，主服务器将自己执行的写命令，发送给从服务器执行，当从服务器执行了相同的写命令之后，主从服务器将再次回到一致状态。
+
+ 
+
+3：完全重同步和部分重同步
+
+         以上就是旧版Redis执行主从复制时的过程。它有个缺点，就是当主从节点间的连接断开后，从节点会发送SYNC命令来重新进行一次完整复制操作。这样即使断开期间主节点的变化很小（甚至没有），也需要将主节点中的所有数据重新快照并传送一次。这种实现方式显然不太理想。
+
+         自2.8版开始，Redis支持部分重同步功能。该功能通过”PSYNC”命令实现。部分重同步是基于如下3点实现的：
+
+         a：从节点会保存主节点的运行ID。每个Redis 运行实例均会拥有一个唯一的运行ID，每当实例重启后，就会自动生成一个新的运行ID。
+
+         b：在命令传播阶段，主节点每将一个命令传送给从节点时，都会同时把该命令存放到一个积压队列(backlog)中，并记录下当前积压队列中，存放的命令的偏移量范围。
+
+         c：同时，从节点接收到主节点传来的命令时，会记录下该命令的偏移量。主节点和所有从节点都记录了命令的偏移量。
+
+ 
+
+         当主从连接准备就绪后，从节点会发送一条”PSYNC”命令，格式为”PSYNC  <runid> <offset>”。
+
+         从节点第一次连接主节点是，置runid为”?”，offset为”-1”。如果是断链重连，则从节点发送之前保存的主节点运行ID和复制偏移。
+
+         主节点收到”PSYNC”命令后，会执行以下判断来决定此次重连是否可以执行部分重同步：
+
+         a：首先判断从节点传送来的<runid>是否和自己的运行ID相同；
+
+         b：然后判断从节点传送来的复制偏移量<offset>是否在积压队列中；
+
+         如果以上两个条件都满足，则可以执行部分重同步，并将积压队列中相应的命令发送给从节点。如果不满足，主节点会进行一次完全重同步，也就是进行之前版本中收到”SYNC”命令后的操作。
+
+ 
+
+         主从复制功能是从节点主动发起，主节点配合完成的，因此，本文先介绍从节点在主从复制时的流程。
+
+         注意，下面的流程都基于Redis3.0.5版本。
+
+ 
+
+二：从节点属性
+
+         在Redis源码中，表示Redis服务器的全局结构体struct redisServer  server中，与主从复制相关的，从节点属性如下：
+
+         server.masterhost：记录主节点的ip地址；
+
+         server.masterport：记录主节点的端口号；
+
+         server.repl_transfer_s：socket描述符，用于主从复制过程中，从节点与主节点之间的TCP通信，包括主从节点间的握手通信、接收RDB数据，以及后续的命令传播过程；
+
+         server.repl_transfer_fd：文件描述符，用于从节点将收到的RDB数据写到本地临时文件；
+
+         server.repl_transfer_tmpfile：从节点上，用于记录RDB数据的临时文件名；
+
+         server.repl_state：记录主从复制过程中，从节点的状态。
+
+         server.master：当从节点接受完主节点发来的RDB数据之后，进入命令传播过程。从节点就将主节点当成一个客户端看待。server.master就是redisClient结构的主节点客户端，从节点接收该server.master发来的命令，像处理普通客户端的命令请求一样进行处理，从而实现了从节点和主节点之间的同步。
+
+         server.master->reploff：从节点记录的复制偏移量，每次收到主节点发来的命令时，就会将命令长度增加到该复制偏移量上，以保持和主节点复制偏移量的一致。
+
+         server.master->replrunid：从节点记录的主节点运行ID。
+
+ 
+
+         server.cached_master：主从节点复制过程中（具体应该是命令传播过程中），如果从节点与主节点之间连接断掉了，会调用freeClient(server.master)，关闭与主节点客户端的连接。为了后续重连时能够进行部分重同步，在freeClient中，会调用replicationCacheMaster函数，将server.master保存到server.cached_master。该redisClient结构中记录了主节点的运行ID，以及复制偏移。当后续与主节点的连接又重新建立起来的时候，使用这些信息进行部分重同步，也就是发送"PSYNC  <runid>  <offset>"命令。
+
+ 
+
+         server.repl_master_runid和server.repl_master_initial_offset：从节点发送"PSYNC  <runid> <offset>"命令后，如果主节点不支持部分重同步，则会回复信息为"+FULLRESYNC <runid>  <offset>"，表示要进行完全重同步，其中<runid>表示主节点的运行ID，记录到server.repl_master_runid中，<offset>表示主节点的初始复制偏移，记录到server.repl_master_initial_offset中。
+
+ 
+
+三：建链和握手过程
+
+         从节点在收到客户端发来的”slaveof”命令时，或者在配置文件中配置了”slaveof”选项时，就会向主节点建链，开始主从复制过程。
+
+         在主节点将实际的RDB数据发送给从节点之前，还需要经历握手过程，这非常类似于TCP建链的三次握手。该过程由从节点主动发起，主节点作出相应的回应。握手过程如下：
+
+
+
+         该握手过程中，从节点的状态会发生转换，从REDIS_REPL_CONNECT状态起，一直到REDIS_REPL_RECEIVE_PSYNC状态期间，都算是握手过程。
+
+ 
+
+1：TCP建链
+
+         在Redis源码中，使用server.repl_state记录从节点的状态。在Redis初始化时，该状态为REDIS_REPL_NONE。
+
+         当从节点收到客户端用户发来的”SLAVEOF” 命令时，或者在读取配置文件，发现了”slaveof”配置选项，就会将server.repl_state置为REDIS_REPL_CONNECT状态。该状态表示下一步需要向主节点发起TCP建链。
+
+         在定时执行的函数serverCron中，会调用replicationCron函数检查主从复制的状态。该函数中，一旦发现当前的server.repl_state为REDIS_REPL_CONNECT，则会调用函数connectWithMaster，向主节点发起TCP建链请求，其代码如下：
+
+int connectWithMaster(void) {
+    int fd;
+
+    fd = anetTcpNonBlockBestEffortBindConnect(NULL,
+        server.masterhost,server.masterport,REDIS_BIND_ADDR);
+    if (fd == -1) {
+        redisLog(REDIS_WARNING,"Unable to connect to MASTER: %s",
+            strerror(errno));
+        return REDIS_ERR;
+    }
+
+    if (aeCreateFileEvent(server.el,fd,AE_READABLE|AE_WRITABLE,syncWithMaster,NULL) ==
+            AE_ERR)
+    {
+        close(fd);
+        redisLog(REDIS_WARNING,"Can't create readable event for SYNC");
+        return REDIS_ERR;
+    }
+
+    server.repl_transfer_lastio = server.unixtime;
+    server.repl_transfer_s = fd;
+    server.repl_state = REDIS_REPL_CONNECTING;
+    return REDIS_OK;
+}
+         server.masterhost和server.masterport分别记录了主节点的IP地址和端口号。它们要么是在slaveof选项中配置，要么是”SLAVEOF”命令中的参数。
+
+         首先调用anetTcpNonBlockBestEffortBindConnect，向主节点发起connect建链请求；该函数创建socket描述符，将该描述符设置为非阻塞，必要情况下会绑定本地地址，然后connect向主节点发起TCP建链请求。该函数返回建链的socket描述符fd；
+
+         然后注册socket描述符fd上的可读和可写事件，事件回调函数都为syncWithMaster，该函数用于处理主从节点间的握手过程；      
+
+         然后将socket描述符记录到server.repl_transfer_s中。置主从复制状态server.repl_state为REDIS_REPL_CONNECTING，表示从节点正在向主节点建链；
+
+ 
+
+2：复制握手
+
+         当主从节点间的TCP建链成功之后，就会触发socket描述符server.repl_transfer_s上的可写事件，从而调用函数syncWithMaster。该函数处理从节点与主节点间的握手过程。也就是从节点在向主节点发送TCP建链请求，到接收RDB数据之前的过程。其代码如下：
+
+void syncWithMaster(aeEventLoop *el, int fd, void *privdata, int mask) {
+    char tmpfile[256], *err = NULL;
+    int dfd, maxtries = 5;
+    int sockerr = 0, psync_result;
+    socklen_t errlen = sizeof(sockerr);
+    REDIS_NOTUSED(el);
+    REDIS_NOTUSED(privdata);
+    REDIS_NOTUSED(mask);
+
+    /* If this event fired after the user turned the instance into a master
+     * with SLAVEOF NO ONE we must just return ASAP. */
+    if (server.repl_state == REDIS_REPL_NONE) {
+        close(fd);
+        return;
+    }
+
+    /* Check for errors in the socket. */
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &sockerr, &errlen) == -1)
+        sockerr = errno;
+    if (sockerr) {
+        redisLog(REDIS_WARNING,"Error condition on socket for SYNC: %s",
+            strerror(sockerr));
+        goto error;
+    }
+
+    /* Send a PING to check the master is able to reply without errors. */
+    if (server.repl_state == REDIS_REPL_CONNECTING) {
+        redisLog(REDIS_NOTICE,"Non blocking connect for SYNC fired the event.");
+        /* Delete the writable event so that the readable event remains
+         * registered and we can wait for the PONG reply. */
+        aeDeleteFileEvent(server.el,fd,AE_WRITABLE);
+        server.repl_state = REDIS_REPL_RECEIVE_PONG;
+        /* Send the PING, don't check for errors at all, we have the timeout
+         * that will take care about this. */
+        err = sendSynchronousCommand(SYNC_CMD_WRITE,fd,"PING",NULL);
+        if (err) goto write_error;
+        return;
+    }
+
+    /* Receive the PONG command. */
+    if (server.repl_state == REDIS_REPL_RECEIVE_PONG) {
+        err = sendSynchronousCommand(SYNC_CMD_READ,fd,NULL);
+
+        /* We accept only two replies as valid, a positive +PONG reply
+         * (we just check for "+") or an authentication error.
+         * Note that older versions of Redis replied with "operation not
+         * permitted" instead of using a proper error code, so we test
+         * both. */
+        if (err[0] != '+' &&
+            strncmp(err,"-NOAUTH",7) != 0 &&
+            strncmp(err,"-ERR operation not permitted",28) != 0)
+        {
+            redisLog(REDIS_WARNING,"Error reply to PING from master: '%s'",err);
+            sdsfree(err);
+            goto error;
+        } else {
+            redisLog(REDIS_NOTICE,
+                "Master replied to PING, replication can continue...");
+        }
+        sdsfree(err);
+        server.repl_state = REDIS_REPL_SEND_AUTH;
+    }
+
+    /* AUTH with the master if required. */
+    if (server.repl_state == REDIS_REPL_SEND_AUTH) {
+        if (server.masterauth) {
+            err = sendSynchronousCommand(SYNC_CMD_WRITE,fd,"AUTH",server.masterauth,NULL);
+            if (err) goto write_error;
+            server.repl_state = REDIS_REPL_RECEIVE_AUTH;
+            return;
+        } else {
+            server.repl_state = REDIS_REPL_SEND_PORT;
+        }
+    }
+
+    /* Receive AUTH reply. */
+    if (server.repl_state == REDIS_REPL_RECEIVE_AUTH) {
+        err = sendSynchronousCommand(SYNC_CMD_READ,fd,NULL);
+        if (err[0] == '-') {
+            redisLog(REDIS_WARNING,"Unable to AUTH to MASTER: %s",err);
+            sdsfree(err);
+            goto error;
+        }
+        sdsfree(err);
+        server.repl_state = REDIS_REPL_SEND_PORT;
+    }
+
+    /* Set the slave port, so that Master's INFO command can list the
+     * slave listening port correctly. */
+    if (server.repl_state == REDIS_REPL_SEND_PORT) {
+        sds port = sdsfromlonglong(server.port);
+        err = sendSynchronousCommand(SYNC_CMD_WRITE,fd,"REPLCONF",
+                "listening-port",port, NULL);
+        sdsfree(port);
+        if (err) goto write_error;
+        sdsfree(err);
+        server.repl_state = REDIS_REPL_RECEIVE_PORT;
+        return;
+    }
+
+    /* Receive REPLCONF listening-port reply. */
+    if (server.repl_state == REDIS_REPL_RECEIVE_PORT) {
+        err = sendSynchronousCommand(SYNC_CMD_READ,fd,NULL);
+        /* Ignore the error if any, not all the Redis versions support
+         * REPLCONF listening-port. */
+        if (err[0] == '-') {
+            redisLog(REDIS_NOTICE,"(Non critical) Master does not understand "
+                                  "REPLCONF listening-port: %s", err);
+        }
+        sdsfree(err);
+        server.repl_state = REDIS_REPL_SEND_CAPA;
+    }
+
+    /* Inform the master of our capabilities. While we currently send
+     * just one capability, it is possible to chain new capabilities here
+     * in the form of REPLCONF capa X capa Y capa Z ...
+     * The master will ignore capabilities it does not understand. */
+    if (server.repl_state == REDIS_REPL_SEND_CAPA) {
+        err = sendSynchronousCommand(SYNC_CMD_WRITE,fd,"REPLCONF",
+                "capa","eof",NULL);
+        if (err) goto write_error;
+        sdsfree(err);
+        server.repl_state = REDIS_REPL_RECEIVE_CAPA;
+        return;
+    }
+
+    /* Receive CAPA reply. */
+    if (server.repl_state == REDIS_REPL_RECEIVE_CAPA) {
+        err = sendSynchronousCommand(SYNC_CMD_READ,fd,NULL);
+        /* Ignore the error if any, not all the Redis versions support
+         * REPLCONF capa. */
+        if (err[0] == '-') {
+            redisLog(REDIS_NOTICE,"(Non critical) Master does not understand "
+                                  "REPLCONF capa: %s", err);
+        }
+        sdsfree(err);
+        server.repl_state = REDIS_REPL_SEND_PSYNC;
+    }
+
+    /* Try a partial resynchonization. If we don't have a cached master
+     * slaveTryPartialResynchronization() will at least try to use PSYNC
+     * to start a full resynchronization so that we get the master run id
+     * and the global offset, to try a partial resync at the next
+     * reconnection attempt. */
+    if (server.repl_state == REDIS_REPL_SEND_PSYNC) {
+        if (slaveTryPartialResynchronization(fd,0) == PSYNC_WRITE_ERROR) {
+            err = sdsnew("Write error sending the PSYNC command.");
+            goto write_error;
+        }
+        server.repl_state = REDIS_REPL_RECEIVE_PSYNC;
+        return;
+    }
+
+    /* If reached this point, we should be in REDIS_REPL_RECEIVE_PSYNC. */
+    if (server.repl_state != REDIS_REPL_RECEIVE_PSYNC) {
+        redisLog(REDIS_WARNING,"syncWithMaster(): state machine error, "
+                             "state should be RECEIVE_PSYNC but is %d",
+                             server.repl_state);
+        goto error;
+    }
+
+    psync_result = slaveTryPartialResynchronization(fd,1);
+    if (psync_result == PSYNC_WAIT_REPLY) return; /* Try again later... */
+
+    /* Note: if PSYNC does not return WAIT_REPLY, it will take care of
+     * uninstalling the read handler from the file descriptor. */
+
+    if (psync_result == PSYNC_CONTINUE) {
+        redisLog(REDIS_NOTICE, "MASTER <-> SLAVE sync: Master accepted a Partial Resynchronization.");
+        return;
+    }
+
+    /* PSYNC failed or is not supported: we want our slaves to resync with us
+     * as well, if we have any (chained replication case). The mater may
+     * transfer us an entirely different data set and we have no way to
+     * incrementally feed our slaves after that. */
+    disconnectSlaves(); /* Force our slaves to resync with us as well. */
+    freeReplicationBacklog(); /* Don't allow our chained slaves to PSYNC. */
+
+    /* Fall back to SYNC if needed. Otherwise psync_result == PSYNC_FULLRESYNC
+     * and the server.repl_master_runid and repl_master_initial_offset are
+     * already populated. */
+    if (psync_result == PSYNC_NOT_SUPPORTED) {
+        redisLog(REDIS_NOTICE,"Retrying with SYNC...");
+        if (syncWrite(fd,"SYNC\r\n",6,server.repl_syncio_timeout*1000) == -1) {
+            redisLog(REDIS_WARNING,"I/O error writing to MASTER: %s",
+                strerror(errno));
+            goto error;
+        }
+    }
+
+    /* Prepare a suitable temp file for bulk transfer */
+    while(maxtries--) {
+        snprintf(tmpfile,256,
+            "temp-%d.%ld.rdb",(int)server.unixtime,(long int)getpid());
+        dfd = open(tmpfile,O_CREAT|O_WRONLY|O_EXCL,0644);
+        if (dfd != -1) break;
+        sleep(1);
+    }
+    if (dfd == -1) {
+        redisLog(REDIS_WARNING,"Opening the temp file needed for MASTER <-> SLAVE synchronization: %s",strerror(errno));
+        goto error;
+    }
+
+    /* Setup the non blocking download of the bulk file. */
+    if (aeCreateFileEvent(server.el,fd, AE_READABLE,readSyncBulkPayload,NULL)
+            == AE_ERR)
+    {
+        redisLog(REDIS_WARNING,
+            "Can't create readable event for SYNC: %s (fd=%d)",
+            strerror(errno),fd);
+        goto error;
+    }
+
+    server.repl_state = REDIS_REPL_TRANSFER;
+    server.repl_transfer_size = -1;
+    server.repl_transfer_read = 0;
+    server.repl_transfer_last_fsync_off = 0;
+    server.repl_transfer_fd = dfd;
+    server.repl_transfer_lastio = server.unixtime;
+    server.repl_transfer_tmpfile = zstrdup(tmpfile);
+    return;
+
+error:
+    aeDeleteFileEvent(server.el,fd,AE_READABLE|AE_WRITABLE);
+    close(fd);
+    server.repl_transfer_s = -1;
+    server.repl_state = REDIS_REPL_CONNECT;
+    return;
+
+write_error: /* Handle sendSynchronousCommand(SYNC_CMD_WRITE) errors. */
+    redisLog(REDIS_WARNING,"Sending command to master in replication handshake: %s", err);
+    sdsfree(err);
+    goto error;
+}
+         函数中如果发生了错误，则错误处理的方式是：删除socket描述符上注册的可读和可写事件，然后关闭描述符，置状态server.repl_state为REDIS_REPL_CONNECT，等待下次调用replicationCron时重连主节点；
+
+ 
+
+         首先检查当前主从复制状态server.repl_state是否为REDIS_REPL_NONE，若是，则说明握手过程期间，从节点收到了客户端执行的"slave  no  one"命令，因此直接关闭socket描述符，然后返回；
+
+         然后调用getsockopt，检查当前socket描述符的错误，若出错，则执行错误处理流程；
+
+        
+
+         如果当前的复制状态为REDIS_REPL_CONNECTING，则说明是从节点connect主节点成功后，触发了描述符的可写事件，从而调用的该回调函数。这种情况下，先删除描述符上的可写事件，然后将状态设置为REDIS_REPL_RECEIVE_PONG，向主节点发送"PING"命令，然后返回；
+
+ 
+
+         如果当前的复制状态为REDIS_REPL_RECEIVE_PONG，则说明从节点收到了主节点对于"PING"命令的回复，触发了描述符的可读事件，从而调用的该回调函数。这种情况下，首先读取主节点的回复信息，正常情况下，主节点的回复只能有三种情况："+PONG"，"-NOAUTH"和"-ERR operation not permitted"（老版本的redis主节点），如果收到的回复不是以上的三种，则直接进入错误处理代码流程。否则，将复制状态置为REDIS_REPL_SEND_AUTH（不返回）；
+
+         当前的复制状态为REDIS_REPL_SEND_AUTH，如果配置了"masterauth"选项，则向主节点发送"AUTH"命令，后跟"masterauth"选项的值，然后将状态置为REDIS_REPL_RECEIVE_AUTH，然后返回；
+
+       如果从节点没有配置"masterauth"选项，则将复制状态置为REDIS_REPL_SEND_PORT（不返回）；
+
+ 
+
+         如果当前的复制状态为REDIS_REPL_RECEIVE_AUTH，说明从节点收到了主节点对于"AUTH"命令的回复，触发了描述符的可读事件，从而调用的该回调函数。这种情况下，首先读取主节点的回复，如果回复信息的首字节为"-"，说明认证失败，直接进入错误处理流程；否则，将状态置为REDIS_REPL_SEND_PORT（不返回）；
+
+         如果当前复制状态为REDIS_REPL_SEND_PORT，则向主节点发送"REPLCONF listening-port  <port>"命令，告知主节点本身的端口号，然后将复制状态置为REDIS_REPL_RECEIVE_PORT后返回；
+
+ 
+
+         如果当前的复制状态为REDIS_REPL_RECEIVE_PORT，说明从节点收到了主节点对于"REPLCONF listening-port"命令的回复，触发了描述符的可读事件，从而调用的该回调函数。这种情况下，首先读取主节点的回复，如果回复信息的首字节为"-"，说明主节点不认识该命令，这不是致命错误，只是记录日志而已；然后将复制状态设置为REDIS_REPL_SEND_CAPA（不返回）；
+
+         如果当前的复制状态为REDIS_REPL_SEND_CAPA，则向主节点发送"REPLCONF capa  eof"命令，告知主节点本身的"能力"，然后将复制状态置为REDIS_REPL_RECEIVE_CAPA后返回；
+
+ 
+
+         如果当前的复制状态为REDIS_REPL_RECEIVE_CAPA，说明从节点收到了主节点对于"REPLCONF capa eof"命令的回复，触发了描述符的可读事件，从而调用的该回调函数。这种情况下，首先读取主节点的回复，如果回复信息的首字节为"-"，说明主节点不认识该命令，这不是致命错误，只是记录日志，然后将复制状态设置为REDIS_REPL_SEND_PSYNC（不返回）；
+
+         如果复制状态为REDIS_REPL_SEND_PSYNC，则调用slaveTryPartialResynchronization函数，向主节点发送"PSYNC  <psync_runid>  <psync_offset>"命令。
+
+         在该函数中，如果从节点缓存了主节点，说明该从节点之前与主节点的连接断掉了，现在是重新连接，因此尝试进行部分重同步。置psync_runid为保存的主节点ID，置psync_offset为保存的主节点复制偏移加1；如果从节点没有缓存主节点，说明需要进行完全重同步，则置psync_runid为"?"，置psync_offset为"-1"；
+
+         发送命令成功后函数返回，将复制状态置为REDIS_REPL_RECEIVE_PSYNC后返回；
+
+ 
+
+         接下来的代码处理握手过程的最后一个状态REDIS_REPL_RECEIVE_PSYNC，走到这里，复制状态只能是REDIS_REPL_RECEIVE_PSYNC，如果不是则进入错误处理流程；
+
+         调用slaveTryPartialResynchronization读取主节点对于"PSYNC"命令的回复：
+
+         如果回复信息以"+CONTINUE"开头，说明主节点可以进行部分重同步，这种情况下，设置复制状态为REDIS_REPL_CONNECTED，后续将主节点当成一个客户端，接收该主节点客户端发来的命令请求，像处理普通客户端一样处理即可。因此函数slaveTryPartialResynchronization返回PSYNC_CONTINUE后，该函数直接返回即可；
+
+         如果回复信息以"+FULLRESYNC"开头，说明主节点虽然认识"PSYNC"命令，但是从节点发送的复制偏移psync_offset已经不在主节点的积压队列中了，因此需要进行完全重同步。解析出回复信息中的主节点ID，保存在server.repl_master_runid中；解析出主节点复制偏移初始值，保存在server.repl_master_initial_offset中；然后函数slaveTryPartialResynchronization返回PSYNC_FULLRESYNC；
+
+         如果回复信息不属于以上的情况，说明主节点不认识"PSYNC"命令，这种情况下，函数slaveTryPartialResynchronization返回PSYNC_NOT_SUPPORTED；
+
+ 
+
+         不管函数slaveTryPartialResynchronization返回PSYNC_FULLRESYNC，还是返回PSYNC_NOT_SUPPORTED，都表示接下来要进行完全重同步过程：
+
+         首先断开当前实例与所有从节点的连接，因为接下来要进行完全重同步，本实例会接收主节点发来的完全不同的数据，因此此举可以让该实例的从节点重新进行复制同步过程（从而也接收这些数据）；
+
+         然后调用freeReplicationBacklog，释放本实例的积压队列server.repl_backlog；
+
+         如果slaveTryPartialResynchronization函数返回的是PSYNC_NOT_SUPPORTED，说明这是老版本的主节点，不支持"PSYNC"命令，因此向主节点发送"SYNC"命令（主节点收到该命令后，直接发送RDB数据）；
+
+         接下来，就是为接收主节点发送来的RDB数据做准备：
+
+         首先创建保存RDB数据的临时文件"temp-<unixtime>.<pid>.rdb"，该文件的描述符记录到server.repl_transfer_fd中；
+
+         然后，注册socket描述符server.repl_transfer_s上的可读事件，事件回调函数为readSyncBulkPayload；
+
+         最后，置复制状态为REDIS_REPL_TRANSFER，表示开始接收主节点的RDB数据。然后执行下列操作后返回：
+
+    server.repl_state = REDIS_REPL_TRANSFER;
+    server.repl_transfer_size = -1;
+    server.repl_transfer_read = 0;
+    server.repl_transfer_last_fsync_off = 0;
+    server.repl_transfer_fd = dfd;
+    server.repl_transfer_lastio = server.unixtime;
+    server.repl_transfer_tmpfile = zstrdup(tmpfile);
+
+
+
+四：从节点的复制状态转换
+
+         根据以上的握手过程，总结出从节点的复制状态转换图，如下图所示：
+
+
+
+         在这些状态中，REDIS_REPL_CONNECT状态是从节点的初始状态，在状态转移过程中，出现了任何错误，都会关闭socket描述符，然后将状态置为REDIS_REPL_CONNECT，等待下次调用定时函数replicationCron时，重新连接主节点。
+
+         从REDIS_REPL_RECEIVE_PONG状态到REDIS_REPL_RECEIVE_PSYNC状态之间，是主从节点间的握手过程。
+
+         REDIS_REPL_RECEIVE_PSYNC状态之后，如果主节点支持部分重同步，则从节点进入状态REDIS_REPL_CONNECTED，后续从节点将主节点当成客户端server.master，从节点接收客户端server.master发来的命令，像处理普通客户端的命令请求一样进行处理，从而实现了从节点和主节点之间的同步；
+
+         如果主节点不支持部分重同步，则需要进行完全重同步，从节点进入REDIS_REPL_TRANSFER状态，开始接收主节点发来的RDB数据。一旦从节点接收到完整的RDB数据，则加载该RDB数据，加载完成之后，从节点进入REDIS_REPL_CONNECTED状态，将主节点当成客户端server.master，接收客户端server.master发来的命令，实现了从节点和主节点之间的同步；
+
+ 
+
+五：接收RDB数据
+
+         正常情况下，完全重同步需要主节点将其中的数据转储到RDB文件中，然后将该文件发送给从节点。如果硬盘IO效率较差，则这种操作对于主节点的性能会造成会影响。
+
+         从2.8.18版本开始，Redis引入了“无硬盘复制”选项，开启该选项时，Redis在与从节点进行复制初始化时将不会将快照内容存储到硬盘上，而是直接通过网络发送给从节点，避免了硬盘的性能瓶颈。不过该功能还在试验阶段，可以在配置文件中使用"repl-diskless-sync"选项来配置开启该功能。
+
+ 
+
+         有硬盘复制的RDB数据和无硬盘复制的RDB数据，它们的格式是不一样的。有硬盘复制的RDB数据，主节点将数据保存到RDB文件后，将文件内容加上"$<len>/r/n"的头部后，发送给从节点。无硬盘复制的RDB数据，主节点直接将数据发送给从节点，而不再先保存到本地文件中，这种格式的RDB数据以"$EOF:<XXX>\r\n"开头，以"<XXX>"结尾。开头和结尾中的<XXX>内容相同，都是40字节长的，由"0123456789abcdef"中的字符组成的随机字符串。
+
+ 
+
+         在syncWithMaster函数中，握手过程结束后，需要进行完全重同步时，从节点注册了socket描述符server.repl_transfer_s上的可读事件，事件回调函数为readSyncBulkPayload。从节点调用该函数接收主节点发来的RDB数据，该函数的代码如下：
+
+#define REPL_MAX_WRITTEN_BEFORE_FSYNC (1024*1024*8) /* 8 MB */
+void readSyncBulkPayload(aeEventLoop *el, int fd, void *privdata, int mask) {
+    char buf[4096];
+    ssize_t nread, readlen;
+    off_t left;
+    REDIS_NOTUSED(el);
+    REDIS_NOTUSED(privdata);
+    REDIS_NOTUSED(mask);
+
+    /* Static vars used to hold the EOF mark, and the last bytes received
+     * form the server: when they match, we reached the end of the transfer. */
+    static char eofmark[REDIS_RUN_ID_SIZE];
+    static char lastbytes[REDIS_RUN_ID_SIZE];
+    static int usemark = 0;
+
+    /* If repl_transfer_size == -1 we still have to read the bulk length
+     * from the master reply. */
+    if (server.repl_transfer_size == -1) {
+        if (syncReadLine(fd,buf,1024,server.repl_syncio_timeout*1000) == -1) {
+            redisLog(REDIS_WARNING,
+                "I/O error reading bulk count from MASTER: %s",
+                strerror(errno));
+            goto error;
+        }
+
+        if (buf[0] == '-') {
+            redisLog(REDIS_WARNING,
+                "MASTER aborted replication with an error: %s",
+                buf+1);
+            goto error;
+        } else if (buf[0] == '\0') {
+            /* At this stage just a newline works as a PING in order to take
+             * the connection live. So we refresh our last interaction
+             * timestamp. */
+            server.repl_transfer_lastio = server.unixtime;
+            return;
+        } else if (buf[0] != '$') {
+            redisLog(REDIS_WARNING,"Bad protocol from MASTER, the first byte is not '$' (we received '%s'), are you sure the host and port are right?", buf);
+            goto error;
+        }
+
+        /* There are two possible forms for the bulk payload. One is the
+         * usual $<count> bulk format. The other is used for diskless transfers
+         * when the master does not know beforehand the size of the file to
+         * transfer. In the latter case, the following format is used:
+         *
+         * $EOF:<40 bytes delimiter>
+         *
+         * At the end of the file the announced delimiter is transmitted. The
+         * delimiter is long and random enough that the probability of a
+         * collision with the actual file content can be ignored. */
+        if (strncmp(buf+1,"EOF:",4) == 0 && strlen(buf+5) >= REDIS_RUN_ID_SIZE) {
+            usemark = 1;
+            memcpy(eofmark,buf+5,REDIS_RUN_ID_SIZE);
+            memset(lastbytes,0,REDIS_RUN_ID_SIZE);
+            /* Set any repl_transfer_size to avoid entering this code path
+             * at the next call. */
+            server.repl_transfer_size = 0;
+            redisLog(REDIS_NOTICE,
+                "MASTER <-> SLAVE sync: receiving streamed RDB from master");
+        } else {
+            usemark = 0;
+            server.repl_transfer_size = strtol(buf+1,NULL,10);
+            redisLog(REDIS_NOTICE,
+                "MASTER <-> SLAVE sync: receiving %lld bytes from master",
+                (long long) server.repl_transfer_size);
+        }
+        return;
+    }
+
+    /* Read bulk data */
+    if (usemark) {
+        readlen = sizeof(buf);
+    } else {
+        left = server.repl_transfer_size - server.repl_transfer_read;
+        readlen = (left < (signed)sizeof(buf)) ? left : (signed)sizeof(buf);
+    }
+
+    nread = read(fd,buf,readlen);
+    if (nread <= 0) {
+        redisLog(REDIS_WARNING,"I/O error trying to sync with MASTER: %s",
+            (nread == -1) ? strerror(errno) : "connection lost");
+        replicationAbortSyncTransfer();
+        return;
+    }
+    server.stat_net_input_bytes += nread;
+
+    /* When a mark is used, we want to detect EOF asap in order to avoid
+     * writing the EOF mark into the file... */
+    int eof_reached = 0;
+
+    if (usemark) {
+        /* Update the last bytes array, and check if it matches our delimiter.*/
+        if (nread >= REDIS_RUN_ID_SIZE) {
+            memcpy(lastbytes,buf+nread-REDIS_RUN_ID_SIZE,REDIS_RUN_ID_SIZE);
+        } else {
+            int rem = REDIS_RUN_ID_SIZE-nread;
+            memmove(lastbytes,lastbytes+nread,rem);
+            memcpy(lastbytes+rem,buf,nread);
+        }
+        if (memcmp(lastbytes,eofmark,REDIS_RUN_ID_SIZE) == 0) eof_reached = 1;
+    }
+
+    server.repl_transfer_lastio = server.unixtime;
+    if (write(server.repl_transfer_fd,buf,nread) != nread) {
+        redisLog(REDIS_WARNING,"Write error or short write writing to the DB dump file needed for MASTER <-> SLAVE synchronization: %s", strerror(errno));
+        goto error;
+    }
+    server.repl_transfer_read += nread;
+
+    /* Delete the last 40 bytes from the file if we reached EOF. */
+    if (usemark && eof_reached) {
+        if (ftruncate(server.repl_transfer_fd,
+            server.repl_transfer_read - REDIS_RUN_ID_SIZE) == -1)
+        {
+            redisLog(REDIS_WARNING,"Error truncating the RDB file received from the master for SYNC: %s", strerror(errno));
+            goto error;
+        }
+    }
+
+    /* Sync data on disk from time to time, otherwise at the end of the transfer
+     * we may suffer a big delay as the memory buffers are copied into the
+     * actual disk. */
+    if (server.repl_transfer_read >=
+        server.repl_transfer_last_fsync_off + REPL_MAX_WRITTEN_BEFORE_FSYNC)
+    {
+        off_t sync_size = server.repl_transfer_read -
+                          server.repl_transfer_last_fsync_off;
+        rdb_fsync_range(server.repl_transfer_fd,
+            server.repl_transfer_last_fsync_off, sync_size);
+        server.repl_transfer_last_fsync_off += sync_size;
+    }
+
+    /* Check if the transfer is now complete */
+    if (!usemark) {
+        if (server.repl_transfer_read == server.repl_transfer_size)
+            eof_reached = 1;
+    }
+
+    if (eof_reached) {
+        if (rename(server.repl_transfer_tmpfile,server.rdb_filename) == -1) {
+            redisLog(REDIS_WARNING,"Failed trying to rename the temp DB into dump.rdb in MASTER <-> SLAVE synchronization: %s", strerror(errno));
+            replicationAbortSyncTransfer();
+            return;
+        }
+        redisLog(REDIS_NOTICE, "MASTER <-> SLAVE sync: Flushing old data");
+        signalFlushedDb(-1);
+        emptyDb(replicationEmptyDbCallback);
+        /* Before loading the DB into memory we need to delete the readable
+         * handler, otherwise it will get called recursively since
+         * rdbLoad() will call the event loop to process events from time to
+         * time for non blocking loading. */
+        aeDeleteFileEvent(server.el,server.repl_transfer_s,AE_READABLE);
+        redisLog(REDIS_NOTICE, "MASTER <-> SLAVE sync: Loading DB in memory");
+        if (rdbLoad(server.rdb_filename) != REDIS_OK) {
+            redisLog(REDIS_WARNING,"Failed trying to load the MASTER synchronization DB from disk");
+            replicationAbortSyncTransfer();
+            return;
+        }
+        /* Final setup of the connected slave <- master link */
+        zfree(server.repl_transfer_tmpfile);
+        close(server.repl_transfer_fd);
+        server.master = createClient(server.repl_transfer_s);
+        server.master->flags |= REDIS_MASTER;
+        server.master->authenticated = 1;
+        server.repl_state = REDIS_REPL_CONNECTED;
+        server.master->reploff = server.repl_master_initial_offset;
+        memcpy(server.master->replrunid, server.repl_master_runid,
+            sizeof(server.repl_master_runid));
+        /* If master offset is set to -1, this master is old and is not
+         * PSYNC capable, so we flag it accordingly. */
+        if (server.master->reploff == -1)
+            server.master->flags |= REDIS_PRE_PSYNC;
+        redisLog(REDIS_NOTICE, "MASTER <-> SLAVE sync: Finished with success");
+        /* Restart the AOF subsystem now that we finished the sync. This
+         * will trigger an AOF rewrite, and when done will start appending
+         * to the new file. */
+        if (server.aof_state != REDIS_AOF_OFF) {
+            int retry = 10;
+
+            stopAppendOnly();
+            while (retry-- && startAppendOnly() == REDIS_ERR) {
+                redisLog(REDIS_WARNING,"Failed enabling the AOF after successful master synchronization! Trying it again in one second.");
+                sleep(1);
+            }
+            if (!retry) {
+                redisLog(REDIS_WARNING,"FATAL: this slave instance finished the synchronization with its master, but the AOF can't be turned on. Exiting now.");
+                exit(1);
+            }
+        }
+    }
+
+    return;
+
+error:
+    replicationAbortSyncTransfer();
+    return;
+}
+         server.repl_transfer_size的值表示要读取的RDB数据的总长度（仅对有硬盘复制的RDB数据而言）。如果当前其值为-1，说明本次是第一次接收RDB数据。因此，首先调用syncReadLine，读取主节点发来的第一行数据("\r\n"之前的内容)到buf中，读取的超时时间为5s，如果在5s之内还读不到"\n"，则syncReadLine返回-1，因此调用函数replicationAbortSyncTransfer，终止本次复制过程，然后返回；
+
+         然后解析读取到的内容，如果符合无硬盘复制的RDB数据格式，则将40字节的随机串记录到静态变量eofmark中，并且置usemark为1，置server.repl_transfer_size为0，然后返回；
+
+         如果不符合无硬盘复制的RDB数据格式，则认为是有硬盘复制的RDB数据，从buf中解析得到RDB数据的长度，记录到server.repl_transfer_size中，并且置usemark为0后返回；
+
+ 
+
+         后续可读事件触发，再次调用该函数时，server.repl_transfer_size已不再是-1，开始接收真正的RDB数据了。usemark为0，表示是有硬盘复制的RDB数据，为1，表示是无硬盘复制的的RDB数据；
+
+ 
+
+         接下来调用read，读取RDB数据内容到buf中。read返回值为nread，如果nread小于等于0，要么说明发生了错误，要么说明主节点终止了链接，无论哪种情况，都是调用函数replicationAbortSyncTransfer，终止本次复制过程，然后返回； 
+
+         如果nread大于0，则先将其增加到server.stat_net_input_bytes中；
+
+         如果是无硬盘复制的RDB数据，则每次read之后，都判断是否接收到了末尾40字节的随机串：如果nread大于等于40，则将buf中后40个字节复制到lastbytes中；否则，将buf复制到lastbytes中的尾部。然后比对lastbytes和eofmark，如果相同，说明已经接收到了末尾，置eof_reached为1；
+
+ 
+
+         然后，将buf写入到描述符server.repl_transfer_fd中，也就是从节点保存RDB数据的临时文件中；
+
+         然后将nread增加到server.repl_transfer_read中，该属性记录了当前已读到的RDB数据的长度；
+
+         如果是无硬盘复制的RDB数据，并且已经读到了末尾，则将临时文件中末尾的40字节的随机串删除；
+
+         每当读取了8M的数据后，都执行一次sync操作，保证临时文件内容确实写到了硬盘；         如果是有硬盘复制的RDB数据，且server.repl_transfer_read等于server.repl_transfer_size，则说明已经接收到所有数据，置eof_reached为1；
+
+ 
+
+         如果所有的RDB数据已经接收完了，则首先将保存RDB数据的临时文件改名为配置的RDB文件名server.rdb_filename；然后调用signalFlushedDb，使得本实例的所有客户端感知到接下来要清空数据库了。然后就是调用emptyDb，清空所有数据，回调函数是replicationEmptyDbCallback，每当处理了字典哈希表中65535个bucket之后，就调用一次该函数，向主节点发送一个"\n"，以向主节点证明本实例还活着；
+
+         然后删除server.repl_transfer_s上的可读事件，这是因为在调用rdbLoad加载RDB数据时，每次调用rioRead都会调用processEventsWhileBlocked处理当前已触发的事件，如果不删除该可读事件的话，就会递归进入的本函数中（因此，从节点在加载RDB数据时，是不能处理主节点发来的其他数据的）；         
+
+         接下来就是调用rdbLoad加载RDB数据；
+
+        
+
+         加载完RDB数据之后，就已经完成了完全重同步过程。接下来，从节点会将主节点当成客户端，像处理普通客户端那样，接收主节点发来的命令，执行命令以保证主从一致性。
+
+         因此，首先关闭RDB临时文件描述符server.repl_transfer_fd，然后就使用socket描述符server.repl_transfer_s创建redisClient结构server.master，因此后续还是使用该描述符接收主节点客户端发来的命令；
+
+         将标记REDIS_MASTER记录到客户端标志中，以表明该客户端是主节点；
+
+         将复制状态置为REDIS_REPL_CONNECTED，表示主从节点已完成握手和接收RDB数据的过程；
+
+         主节点之前的发送"PSYNC"命令回复为"+FULLRESYNC"时，附带的初始复制偏移记录到了server.repl_master_initial_offset中，将其保存到server.master->reploff；附带的主节点ID记录到了server.repl_master_runid中，将其保存到server.master->replrunid中；如果server.repl_master_initial_offset为-1，说明主节点不认识"PSYNC"命令，因此将REDIS_PRE_PSYNC记录到客户端标志位中；
+
+         完成以上的操作之后，如果本实例开启了AOF功能，则首先调用stopAppendOnly，然后循环10次，调用startAppendOnly开始进行AOF转储，直到startAppendOnly返回REDIS_OK。如果startAppendOnly失败次数超过10次，则直接exit退出！！！
+
+ 
+
+六：命令传播
+
+         当复制状态变为REDIS_REPL_CONNECTED后，表示进入了命令传播阶段。后续从节点将主节点当成一个客户端，接收该主节点客户端发来的命令请求，像处理普通客户端一样处理即可。
+
+
+
+         在读取客户端命令的函数readQueryFromClient中，一旦从节点读到了追节点发来的同步命令，会将命令长度增加到从节点的复制偏移量server.master. reploff中：
+
+    if (nread) {
+        sdsIncrLen(c->querybuf,nread);
+        c->lastinteraction = server.unixtime;
+        if (c->flags & REDIS_MASTER) c->reploff += nread;
+        server.stat_net_input_bytes += nread;
+    } 
+         这样，从节点的复制偏移量server.master. reploff就能与主节点保持一致了。
+
+
+         与普通客户端不同的是，主节点客户端发来的命令请求无需回复，因此，在函数prepareClientToWrite中，有下面的语句：
+
+int prepareClientToWrite(redisClient *c) {
+    ...
+    /* Masters don't receive replies, unless REDIS_MASTER_FORCE_REPLY flag
+     * is set. */
+    if ((c->flags & REDIS_MASTER) &&
+        !(c->flags & REDIS_MASTER_FORCE_REPLY)) return REDIS_ERR;
+    ...
+}   
+         每次向客户端输出缓存追加新数据之前，都要调用函数prepareClientToWrite函数。如果该函数返回REDIS_ERR，表示无需向输出缓存追加新数据。
+
+         客户端标志中如果设置了REDIS_MASTER标记，就表示该客户端是主节点客户端server.master，并且在没有设置REDIS_MASTER_FORCE_REPLY标记的情况下，该函数返回REDIS_ERR，表示无需向输出缓存追加新数据。
+
+主从复制过程中，主节点根据从节点发来的命令执行相应的操作。结合上一章中讲解的从节点在主从复制中的流程，本章以及下一篇文章讲解一下主节点在主从复制过程中的流程。
+
+         本章主要介绍完全重同步流程。
+
+ 
+
+一：从节点建链和握手
+
+         从节点在向主节点发起TCP建链，以及复制握手过程中，主节点一直把从节点当成一个普通的客户端处理。也就是说，不为从节点保存状态，只是收到从节点发来的命令进而处理并回复罢了。
+
+         从节点在握手过程中第一个发来的命令是”PING”，主节点调用redis.c中的pingCommand函数处理，只是回复字符串”+PONG”即可。
+
+ 
+
+         接下来从节点向主节点发送”AUTHxxx”命令进行认证，主节点调用redis.c中的authCommand函数进行处理，该函数的代码如下：
+
+void authCommand(redisClient *c) {
+    if (!server.requirepass) {
+        addReplyError(c,"Client sent AUTH, but no password is set");
+    } else if (!time_independent_strcmp(c->argv[1]->ptr, server.requirepass)) {
+      c->authenticated = 1;
+      addReply(c,shared.ok);
+    } else {
+      c->authenticated = 0;
+      addReplyError(c,"invalid password");
+    }
+}
+         server.requirepass根据配置文件中"requirepass"的选项进行设置，保存了Redis实例的密码。如果该值为NULL，说明本Redis实例不需要密码。这种情况下，如果从节点发来”AUTH xxx”命令，则回复给从节点错误信息："Client sent AUTH, but no password is set"。
+
+         接下来，对从节点发来的密码和server.requirepass进行比对，如果匹配成功，则回复给客户端”+OK”，否则，回复给客户端错误信息："invalid password"。
+
+ 
+
+         从节点接下来发送"REPLCONF listening-port  <port>"和"REPLCONF capa  eof"命令，告知主节点自己的监听端口和“能力”。主节点通过replication.c中的replconfCommand函数处理这些命令，代码如下：
+
+void replconfCommand(redisClient *c) {
+    int j;
+
+    if ((c->argc % 2) == 0) {
+        /* Number of arguments must be odd to make sure that every
+         * option has a corresponding value. */
+        addReply(c,shared.syntaxerr);
+        return;
+    }
+
+    /* Process every option-value pair. */
+    for (j = 1; j < c->argc; j+=2) {
+        if (!strcasecmp(c->argv[j]->ptr,"listening-port")) {
+            long port;
+
+            if ((getLongFromObjectOrReply(c,c->argv[j+1],
+                    &port,NULL) != REDIS_OK))
+                return;
+            c->slave_listening_port = port;
+        } else if (!strcasecmp(c->argv[j]->ptr,"capa")) {
+            /* Ignore capabilities not understood by this master. */
+            if (!strcasecmp(c->argv[j+1]->ptr,"eof"))
+                c->slave_capa |= SLAVE_CAPA_EOF;
+        } 
+	   ...
+    }
+    addReply(c,shared.ok);
+}
+         “REPLCONF”命令的格式为"REPLCONF  <option>  <value> <option>  <value>  ..."。因此，如果命令参数是偶数，说明命令格式错误，回复给从节点客户端错误信息："-ERR syntax error"；
+
+         如果从节点发来的是"REPLCONF listening-port  <port>"命令，则从中取出<port>信息，保存在客户端的slave_listening_port属性中，记录从节点客户端的监听端口，主节点使用从节点的IP地址和监听端口，作为从节点的身份标识；
+
+         如果从节点发来的是"REPLCONF capa  eof"命令，则将从节点客户端的能力属性slave_capa增加SLAVE_CAPA_EOF标记，表示该从节点支持无硬盘复制。目前为止，仅有这一种能力标记。
+
+ 
+
+二：完全重同步时，从节点状态转换
+
+         接下来，从节点会向主节点发送”SYNC”或”PSYNC”命令，请求进行完全重同步或者部分重同步。
+
+         主节点收到这些命令之后，如果是需要进行完全重同步，则开始在后台进行RDB数据转储（将数据保存在本地文件或者直接发给从节点）。同时，在前台接着接收客户端发来的命令请求。为了使从节点能与主节点的状态保持一致，主节点需要将这些命令请求缓存起来，以便在从节点收到主节点RDB数据并加载完成之后，将这些累积的命令流发送给从节点。
+
+ 
+
+         从收到从节点的”SYNC”或”PSYNC”命令开始，主节点开始为该从节点保存状态。从此时起，站在主节点的角度，从节点的状态会发生转换。
+
+         主节点为从节点保存的状态记录在客户端结构redisClient中的replstate属性中。从主节点的角度看，从节点需要经历的状态分别是：REDIS_REPL_WAIT_BGSAVE_START、REDIS_REPL_WAIT_BGSAVE_END、REDIS_REPL_SEND_BULK和REDIS_REPL_ONLINE。
+
+ 
+
+         当主节点收到从节点发来的”SYNC”或”PSYNC”命令，并且需要完全重同步时，将从节点的状态置为REDIS_REPL_WAIT_BGSAVE_START，表示该从节点等待主节点后台RDB数据转储的开始；
+
+ 
+
+         接下来，当主节点开始在后台进行RDB数据转储时，将从节点的状态置为REDIS_REPL_WAIT_BGSAVE_END，表示该从节点等待主节点后台RDB数据转储的完成；
+
+         主节点在后台进行RDB数据的转储的时候，依然可以接收客户端发来的命令请求，为了能使从节点与主节点保持一致，主节点需要将客户端发来的命令请求，保存到从节点客户端的输出缓存中，这就是所谓的为从节点累积命令流。当从节点的复制状态变为REDIS_REPL_ONLINE时，就可以将这些累积的命令流发送个从节点了。
+
+ 
+
+         如果主节点在进行后台RDB数据转储时，使用的是有硬盘复制的方式（将RDB数据保存在本地文件），则RDB数据转储完成时，将从节点的状态置为REDIS_REPL_SEND_BULK，表示接下来要将本地的RDB文件发送给客户端了；当所有的RDB数据发送完成后，将从节点的状态置为REDIS_REPL_ONLINE，表示可以向从节点发送累积的命令流了。
+
+         如果主节点在进行后台RDB数据转储时，使用的是无硬盘复制的方式（将RDB数据直接通过网络发送给从节点），则RDB数据发送完成之后，收到从节点发来的第一个"REPLCONF  ACK  <offset>"后，就将从节点的状态置为REDIS_REPL_ONLINE，表示可以向从节点发送累积的命令流了。
+
+         无硬盘复制的RDB数据转储，之所以要等到收到第一个"REPLCONF  ACK  <offset>"后，才能将从节点的状态置为REDIS_REPL_ONLINE。结合注释：https://github.com/antirez/redis/commit/bb7fea0d5ca7b3a53532338e8654e409014c1194，个人理解是因为无硬盘复制的RDB数据，不同于有硬盘复制的RDB数据，它没有长度标记，从节点每次从socket读取的数据量都是固定的(4k)。下面是从节点读取RDB数据时调用的readSyncBulkPayload函数中，每次read之前，计算要读取多少字节的代码，usemark为1表示无硬盘复制：
+
+    /* Read bulk data */
+    if (usemark) {
+        readlen = sizeof(buf);
+    } else {
+        left = server.repl_transfer_size - server.repl_transfer_read;
+        readlen = (left < (signed)sizeof(buf)) ? left : (signed)sizeof(buf);
+    }
+         因此，主节点在通过socket发送完RDB数据之后，如果接着就使用该socket发送累积的命令流，则从节点读取数据时，最后读到的数据中，有可能一部分是RDB数据，剩下的部分是累积的命令流。而此时从节点接下来就要加载RDB数据，无法处理这部分累积的命令流，只能丢掉，这就造成了主从数据库状态不一致了。
+
+         因此，等到从节点发来第一个"REPLCONF  ACK <offset>"消息之后，此时能保证从节点已经加载完RDB数据，可以接收累积的命令流了。因此，这时才可以将从节点的复制状态置为REDIS_REPL_ONLINE。
+
+         有硬盘复制的RDB数据，因为数据头中包含了数据长度，因此从节点知道总共需要读取多少RDB数据。因此，有硬盘复制的RDB数据转储，在发送完RDB数据之后，就可以立即将从节点复制状态置为REDIS_REPL_ONLINE。
+
+ 
+
+         根据以上的描述，总结从节点的状态转换图如下： 
+
+
+
+三：SYNC或PSYNC命令的处理
+
+         主节点收到从节点发来的”SYNC”或”PSYNC”命令后，如果需要为该从节点进行完全重同步，将从节点的复制状态置为REDIS_REPL_WAIT_BGSAVE_START。开始在后台进行RDB数据转储时，则将复制状态置为REDIS_REPL_WAIT_BGSAVE_END。
+
+ 
+
+         这里有一个问题，考虑这样一种情形：当主节点收到从节点A的”SYNC”或”PSYNC”命令后，要为该从节点进行完全重同步时，在将A的复制状态变为REDIS_REPL_WAIT_BGSAVE_END时刻起，主节点在前台接收客户端的命令请求，将该命令情求保存到A的输出缓存中，并在后台进行有硬盘复制的RDB数据转储。
+
+         在后台进行有硬盘复制的RDB数据转储尚未完成时，如果又有新的从节点B发来了”SYNC”或”PSYNC”命令，同样需要完全重同步。此时主节点后台正在进行RDB数据转储，而且已经为A缓存了命令流。那么从节点B完全可以重用这份RDB数据，而无需再执行一次RDB转储了。而且将A中的输出缓存复制到B的输出缓存中，就能保证B的数据库状态也能与主节点一致了。因此，直接将B的复制状态直接置为REDIS_REPL_WAIT_BGSAVE_END，等到后台RDB数据转储完成时，直接将该转储文件同时发送给从节点A和B即可。
+
+         但是如果此刻主节点进行的是无硬盘复制的RDB数据转储，这意味着主节点是直接将RDB数据通过socket发送给从节点A的，从节点B也就无法重用RDB数据了，因此需要再次执行一次BGSAVE操作。
+
+ 
+
+         下面就是主节点收到”SYNC”或”PSYNC”命令的处理函数syncCommand的代码：
+
+void syncCommand(redisClient *c) {
+    /* ignore SYNC if already slave or in monitor mode */
+    if (c->flags & REDIS_SLAVE) return;
+
+    /* Refuse SYNC requests if we are a slave but the link with our master
+     * is not ok... */
+    if (server.masterhost && server.repl_state != REDIS_REPL_CONNECTED) {
+        addReplyError(c,"Can't SYNC while not connected with my master");
+        return;
+    }
+
+    /* SYNC can't be issued when the server has pending data to send to
+     * the client about already issued commands. We need a fresh reply
+     * buffer registering the differences between the BGSAVE and the current
+     * dataset, so that we can copy to other slaves if needed. */
+    if (listLength(c->reply) != 0 || c->bufpos != 0) {
+        addReplyError(c,"SYNC and PSYNC are invalid with pending output");
+        return;
+    }
+
+    redisLog(REDIS_NOTICE,"Slave %s asks for synchronization",
+        replicationGetSlaveName(c));
+
+    /* Try a partial resynchronization if this is a PSYNC command.
+     * If it fails, we continue with usual full resynchronization, however
+     * when this happens masterTryPartialResynchronization() already
+     * replied with:
+     *
+     * +FULLRESYNC <runid> <offset>
+     *
+     * So the slave knows the new runid and offset to try a PSYNC later
+     * if the connection with the master is lost. */
+    if (!strcasecmp(c->argv[0]->ptr,"psync")) {
+        if (masterTryPartialResynchronization(c) == REDIS_OK) {
+            server.stat_sync_partial_ok++;
+            return; /* No full resync needed, return. */
+        } else {
+            char *master_runid = c->argv[1]->ptr;
+
+            /* Increment stats for failed PSYNCs, but only if the
+             * runid is not "?", as this is used by slaves to force a full
+             * resync on purpose when they are not albe to partially
+             * resync. */
+            if (master_runid[0] != '?') server.stat_sync_partial_err++;
+        }
+    } else {
+        /* If a slave uses SYNC, we are dealing with an old implementation
+         * of the replication protocol (like redis-cli --slave). Flag the client
+         * so that we don't expect to receive REPLCONF ACK feedbacks. */
+        c->flags |= REDIS_PRE_PSYNC;
+    }
+
+    /* Full resynchronization. */
+    server.stat_sync_full++;
+
+    /* Setup the slave as one waiting for BGSAVE to start. The following code
+     * paths will change the state if we handle the slave differently. */
+    c->replstate = REDIS_REPL_WAIT_BGSAVE_START;
+    if (server.repl_disable_tcp_nodelay)
+        anetDisableTcpNoDelay(NULL, c->fd); /* Non critical if it fails. */
+    c->repldbfd = -1;
+    c->flags |= REDIS_SLAVE;
+    listAddNodeTail(server.slaves,c);
+
+    /* CASE 1: BGSAVE is in progress, with disk target. */
+    if (server.rdb_child_pid != -1 &&
+        server.rdb_child_type == REDIS_RDB_CHILD_TYPE_DISK)
+    {
+        /* Ok a background save is in progress. Let's check if it is a good
+         * one for replication, i.e. if there is another slave that is
+         * registering differences since the server forked to save. */
+        redisClient *slave;
+        listNode *ln;
+        listIter li;
+
+        listRewind(server.slaves,&li);
+        while((ln = listNext(&li))) {
+            slave = ln->value;
+            if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_END) break;
+        }
+        /* To attach this slave, we check that it has at least all the
+         * capabilities of the slave that triggered the current BGSAVE. */
+        if (ln && ((c->slave_capa & slave->slave_capa) == slave->slave_capa)) {
+            /* Perfect, the server is already registering differences for
+             * another slave. Set the right state, and copy the buffer. */
+            copyClientOutputBuffer(c,slave);
+            replicationSetupSlaveForFullResync(c,slave->psync_initial_offset);
+            redisLog(REDIS_NOTICE,"Waiting for end of BGSAVE for SYNC");
+        } else {
+            /* No way, we need to wait for the next BGSAVE in order to
+             * register differences. */
+            redisLog(REDIS_NOTICE,"Waiting for next BGSAVE for SYNC");
+        }
+
+    /* CASE 2: BGSAVE is in progress, with socket target. */
+    } else if (server.rdb_child_pid != -1 &&
+               server.rdb_child_type == REDIS_RDB_CHILD_TYPE_SOCKET)
+    {
+        /* There is an RDB child process but it is writing directly to
+         * children sockets. We need to wait for the next BGSAVE
+         * in order to synchronize. */
+        redisLog(REDIS_NOTICE,"Waiting for next BGSAVE for SYNC");
+
+    /* CASE 3: There is no BGSAVE is progress. */
+    } else {
+        if (server.repl_diskless_sync && (c->slave_capa & SLAVE_CAPA_EOF)) {
+            /* Diskless replication RDB child is created inside
+             * replicationCron() since we want to delay its start a
+             * few seconds to wait for more slaves to arrive. */
+            if (server.repl_diskless_sync_delay)
+                redisLog(REDIS_NOTICE,"Delay next BGSAVE for SYNC");
+        } else {
+            /* Target is disk (or the slave is not capable of supporting
+             * diskless replication) and we don't have a BGSAVE in progress,
+             * let's start one. */
+            if (startBgsaveForReplication(c->slave_capa) != REDIS_OK) return;
+        }
+    }
+
+    if (listLength(server.slaves) == 1 && server.repl_backlog == NULL)
+        createReplicationBacklog();
+    return;
+}
+         在函数中，如果当前的客户端标志位中已经有REDIS_SLAVE标记了，则直接返回；
+
+         如果当前Redis实例是其他主节点的从节点，并且该从节点的复制状态不是REDIS_REPL_CONNECTED，说明当前的从节点实例，还没有到接收并加载完其主节点发来的RDB数据的步骤，这种情况下，该从节点实例是不能为其下游从节点进行同步的，因此向其客户端回复错误信息，然后返回；
+
+ 
+
+         如果当前的客户端输出缓存中已经有数据了，说明在SYNC(PSYNC)命令之前的命令交互中，该Redis实例尚有回复信息还没有完全发送给该从节点客户端，这种情况下，向该从节点客户端回复错误信息，然后返回；
+
+         这是因为主节点接下来需要为该从节点进行后台RDB数据转储了，同时需要将前台接收到的其他客户端命令请求缓存到该从节点客户端的输出缓存中，这就需要一个完全清空的输出缓存，才能为该从节点保存从执行BGSAVE开始的命令流。因此，如果从节点客户端的输出缓存中尚有数据，直接回复错误信息。
+
+         在主节点收到从节点发来的SYNC(PSYNC)命令之前，主从节点之间的交互信息都是比较短的，因此，在网络正常的情况下，从节点客户端中的输出缓存应该是很容易就发送给该从节点，并清空的。
+
+ 
+
+         接下来开始处理PSYNC或者SYNC命令：
+
+         如果用户发来的是"PSYNC"命令，则首先调用masterTryPartialResynchronization尝试进行部分重同步，如果成功，则直接返回即可。部分重同步的细节会在下一篇文章中讲解；
+
+         如果不能为该从节点执行部分重同步，则接下来需要进行完全重同步了。首先如果用户发来的"SYNC"命令，则将REDIS_PRE_PSYNC标记增加到客户端标记中，表示该从节点客户端是老版本的Redis实例；接下来就准备进行完全重同步了，先增加server.stat_sync_full的值；
+
+        
+
+         首先将该从节点客户端的复制状态置为REDIS_REPL_WAIT_BGSAVE_START，表示该从节点需要主节点进行BGSAVE；
+
+         如果server.repl_disable_tcp_nodelay选项为真，则取消与从节点通信的socket描述符的TCP_NODELAY选项；  
+
+         将REDIS_SLAVE标记记录到从节点客户端的标志位中，以标识该客户端为从节点客户端；
+
+         将该从节点客户端添加到列表server.slaves中；
+
+        
+
+         接下来开始分情况处理：
+
+         情况1：如果当前已有子进程正在后台将RDB转储到本地文件，则轮训列表server.slaves，找到一个复制状态为REDIS_REPL_WAIT_BGSAVE_END的从节点客户端。
+
+         如果找到了一个这样的从节点客户端A，并且A的能力是大于当前从节点的。那么主节点为从节点A，在后台开始进行RDB数据转储时，同时会将前台收到的命令流缓存到从节点A的输出缓存中。因此当前发来SYNC(PSYNC)命令的从节点完全可以重用这份RDB数据，以及从节点A中缓存的命令流，而无需再执行一次RDB转储。等到本次BGSAVE完成之后，只需要将RDB文件发送给A以及当前从节点即可。
+
+         因此，找到这样的从节点A后，只要复制A的输出缓存中的内容到当前从节点的输出缓存中，然后调用replicationSetupSlaveForFullResync，将该从节点客户端的复制状态置为REDIS_REPL_WAIT_BGSAVE_END，然后向其发送"+FULLRESYNC"回复即可；
+
+         如果找不到这样的从节点客户端，则主节点需要在当前的BGSAVE操作完成之后，重新执行一次BGSAVE操作；
+
+        
+
+         情况2：如果当前有子进程在后台进行RDB转储，但是是直接将RDB数据通过socket直接发送给了从节点。这种情况下，当前的从节点无法重用RDB数据，必须在当前的BGSAVE操作完成之后，重新执行一次BGSAVE操作；
+
+ 
+
+         情况3：如果当前没有子进程在进行RDB转储，并且当前的从节点客户端可以接受无硬盘复制的RDB数据。这种情况下，先暂时不进行BGSAVE，而是在定时函数replicationCron中在执行，这样可以等到更多的从节点，以减少执行BGSAVE的次数；
+
+ 
+
+         情况4：如果当前没有子进程在进行RDB转储，并且当前的从节点客户端只能接受有硬盘复制的RDB数据，则调用startBgsaveForReplication开始进行BGSAVE操作；
+
+ 
+
+         最后，如果当前的列表server.slaves长度为1，并且server.repl_backlog为NULL，说明当前从节点客户端是该主节点实例的第一个从节点，因此调用createReplicationBacklog创建积压队列；
+
+ 
+
+四：开始BGSAVE操作
+
+         由函数startBgsaveForReplication执行BGSAVE操作。在开始执行BGSAVE操作时，需要向从节点发送"+FULLRESYNC <runid>  <offset>"信息，从节点收到该信息后，会保存主节点的运行ID，以及复制偏移的初始值，以便后续断链时可以进行部分重同步。
+
+         startBgsaveForReplication的代码如下：
+
+int startBgsaveForReplication(int mincapa) {
+    int retval;
+    int socket_target = server.repl_diskless_sync && (mincapa & SLAVE_CAPA_EOF);
+    listIter li;
+    listNode *ln;
+
+    redisLog(REDIS_NOTICE,"Starting BGSAVE for SYNC with target: %s",
+        socket_target ? "slaves sockets" : "disk");
+
+    if (socket_target)
+        retval = rdbSaveToSlavesSockets();
+    else
+        retval = rdbSaveBackground(server.rdb_filename);
+
+    /* If we failed to BGSAVE, remove the slaves waiting for a full
+     * resynchorinization from the list of salves, inform them with
+     * an error about what happened, close the connection ASAP. */
+    if (retval == REDIS_ERR) {
+        redisLog(REDIS_WARNING,"BGSAVE for replication failed");
+        listRewind(server.slaves,&li);
+        while((ln = listNext(&li))) {
+            redisClient *slave = ln->value;
+
+            if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) {
+                slave->flags &= ~REDIS_SLAVE;
+                listDelNode(server.slaves,ln);
+                addReplyError(slave,
+                    "BGSAVE failed, replication can't continue");
+                slave->flags |= REDIS_CLOSE_AFTER_REPLY;
+            }
+        }
+        return retval;
+    }
+
+    /* If the target is socket, rdbSaveToSlavesSockets() already setup
+     * the salves for a full resync. Otherwise for disk target do it now.*/
+    if (!socket_target) {
+        listRewind(server.slaves,&li);
+        while((ln = listNext(&li))) {
+            redisClient *slave = ln->value;
+
+            if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) {
+                    replicationSetupSlaveForFullResync(slave,
+                            getPsyncInitialOffset());
+            }
+        }
+    }
+
+    /* Flush the script cache, since we need that slave differences are
+     * accumulated without requiring slaves to match our cached scripts. */
+    if (retval == REDIS_OK) replicationScriptCacheFlush();
+    return retval;
+}
+         参数mincapa，表示从节点的"能力"，也就是是否能接受无硬盘复制的RDB数据。如果选项server.repl_diskless_sync为真，并且参数mincapa中包含SLAVE_CAPA_EOF标记，说明可以为该从节点直接发送无硬盘复制的RDB数据，因此调用rdbSaveToSlavesSockets，直接在后台将RDB数据通过socket发送给所有状态为REDIS_REPL_WAIT_BGSAVE_START的从节点；
+
+         否则，调用rdbSaveBackground，在后台将RDB数据转储到本地文件；
+
+        
+
+         如果rdbSaveToSlavesSockets或者rdbSaveBackground返回失败，说明创建后台子进程失败。需要断开所有处于REDIS_REPL_WAIT_BGSAVE_START状态的从节点的连接；
+
+         轮训列表server.slaves，找到所有处于状态REDIS_REPL_WAIT_BGSAVE_START的从节点。首先删除该从节点客户端标志位中的REDIS_SLAVE标记，然后将其从server.slaves中删除；回复从节点错误信息，然后增加REDIS_CLOSE_AFTER_REPLY标记到客户端标志位中，也就是回复完错误消息后，立即关闭与该从节点的连接；最后返回；
+
+ 
+
+         如果当前进行的是有硬盘复制的RDB转储，则轮训列表server.slaves，找到其中处于状态REDIS_REPL_WAIT_BGSAVE_START的从节点，调用replicationSetupSlaveForFullResync函数将其状态置为REDIS_REPL_WAIT_BGSAVE_END，并且发送"+FULLRESYNC<runid> <offset>"回复；
+
+         因为无硬盘复制的RDB数据转储，已经在rdbSaveToSlavesSockets中进行过该过程了，所以这里只处理有硬盘复制的情况。
+
+         最后，调用replicationScriptCacheFlush。
+
+ 
+
+         下面是函数replicationSetupSlaveForFullResync的代码：
+
+int replicationSetupSlaveForFullResync(redisClient *slave, long long offset) {
+    char buf[128];
+    int buflen;
+
+    slave->psync_initial_offset = offset;
+    slave->replstate = REDIS_REPL_WAIT_BGSAVE_END;
+    /* We are going to accumulate the incremental changes for this
+     * slave as well. Set slaveseldb to -1 in order to force to re-emit
+     * a SLEECT statement in the replication stream. */
+    server.slaveseldb = -1;
+
+    /* Don't send this reply to slaves that approached us with
+     * the old SYNC command. */
+    if (!(slave->flags & REDIS_PRE_PSYNC)) {
+        buflen = snprintf(buf,sizeof(buf),"+FULLRESYNC %s %lld\r\n",
+                          server.runid,offset);
+        if (write(slave->fd,buf,buflen) != buflen) {
+            freeClientAsync(slave);
+            return REDIS_ERR;
+        }
+    }
+    return REDIS_OK;
+}
+         在从节点发来"PSYNC"或"SYNC"命令后，为从节点进行完全重同步时，立即调用该函数，更改从节点客户端的复制状态为REDIS_REPL_WAIT_BGSAVE_END；
+
+         首先设置从节点客户端的psync_initial_offset属性为参数offset。一般情况下，参数offset是由getPsyncInitialOffset函数得到，该函数返回主节点上当前的的复制偏移量。但是如果从节点客户端B是在主节点进行RDB转储时新连接到主节点的，并且它找到了一个可以复用RDB数据和输出缓存的从节点A，则需要使用A->psync_initial_offset为参数调用本函数。也就是说，B还需要复用A的初始复制偏移量；
+
+         然后设置从节点客户端复制状态为REDIS_REPL_WAIT_BGSAVE_END，表示等待RDB转储完成；从复制状态变为REDIS_REPL_WAIT_BGSAVE_END的时刻起，主节点就开始在该从节点客户端的输出缓存中，为从节点累积命令流了。因此，设置server.slaveseldb为-1，这样可以在开始累积命令流时，强制增加一条"SELECT"命令到客户端输出缓存中，以免第一条命令没有选择数据库；
+
+         如果该从节点发送的是PSYNC命令，则直接回复给从节点信息："+FULLRESYNC <runid> <offset>"，注意这里是直接调用的write发送的信息，而没有用到输出缓存。这是因为输出缓存此时只能用于缓存命令流。从节点收到该信息后，会保存主节点的运行ID，以及复制偏移的初始值，以便后续断链时可以进行部分重同步。
+
+ 
+
+五：为从节点累积命令流
+
+         从主节点在为从节点执行BGSAVE操作的时刻起，准确的说是从节点的复制状态变为REDIS_REPL_WAIT_BGSAVE_END的时刻起，主节点就需要将收到的客户端命令请求，缓存一份到从节点的输出缓存中，也就是为从节点累积命令流。等到从节点状态变为REDIS_REPL_ONLINE时，就可以将累积的命令流发送给从节点了，从而保证了从节点的数据库状态能够与主节点保持一致。
+
+         前面提到过，主节点收到”SYNC”或”PSYNC”命令后，调用syncCommand时处理时，就需要保证从节点的输出缓存是空的，而且即使是需要回复从节点"+FULLRESYNC"时，也是调用write，将信息直接发送给从节点客户端，而没有使用客户端的输出缓存。这就是因为要使用客户端的输出缓存来为从节点累积命令流。
+
+ 
+
+         当主节点收到客户端发来的命令请求后，会调用call函数执行相应的命令处理函数。在call函数的最后，有下面的语句：
+
+    /* Propagate the command into the AOF and replication link */
+    if (flags & REDIS_CALL_PROPAGATE) {
+        int flags = REDIS_PROPAGATE_NONE;
+
+        if (c->flags & REDIS_FORCE_REPL) flags |= REDIS_PROPAGATE_REPL;
+        if (c->flags & REDIS_FORCE_AOF) flags |= REDIS_PROPAGATE_AOF;
+        if (dirty)
+            flags |= (REDIS_PROPAGATE_REPL | REDIS_PROPAGATE_AOF);
+        if (flags != REDIS_PROPAGATE_NONE)
+            propagate(c->cmd,c->db->id,c->argv,c->argc,flags);
+    }
+
+         上面的语句中，dirty表示在执行命令处理函数时，数据库状态是否发生了变化。只要dirty不为0，就会为flags增加REDIS_PROPAGATE_REPL和REDIS_PROPAGATE_AOF标记。从而调用propagate，该函数会调用replicationFeedSlaves将该命令传播给从节点。
+
+         replicationFeedSlaves函数的代码如下：
+
+void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
+    listNode *ln;
+    listIter li;
+    int j, len;
+    char llstr[REDIS_LONGSTR_SIZE];
+
+    /* If there aren't slaves, and there is no backlog buffer to populate,
+     * we can return ASAP. */
+    if (server.repl_backlog == NULL && listLength(slaves) == 0) return;
+
+    /* We can't have slaves attached and no backlog. */
+    redisAssert(!(listLength(slaves) != 0 && server.repl_backlog == NULL));
+
+    /* Send SELECT command to every slave if needed. */
+    if (server.slaveseldb != dictid) {
+        robj *selectcmd;
+
+        /* For a few DBs we have pre-computed SELECT command. */
+        if (dictid >= 0 && dictid < REDIS_SHARED_SELECT_CMDS) {
+            selectcmd = shared.select[dictid];
+        } else {
+            int dictid_len;
+
+            dictid_len = ll2string(llstr,sizeof(llstr),dictid);
+            selectcmd = createObject(REDIS_STRING,
+                sdscatprintf(sdsempty(),
+                "*2\r\n$6\r\nSELECT\r\n$%d\r\n%s\r\n",
+                dictid_len, llstr));
+        }
+
+        /* Add the SELECT command into the backlog. */
+        if (server.repl_backlog) feedReplicationBacklogWithObject(selectcmd);
+
+        /* Send it to slaves. */
+        listRewind(slaves,&li);
+        while((ln = listNext(&li))) {
+            redisClient *slave = ln->value;
+            if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) continue;
+            addReply(slave,selectcmd);
+        }
+
+        if (dictid < 0 || dictid >= REDIS_SHARED_SELECT_CMDS)
+            decrRefCount(selectcmd);
+    }
+    server.slaveseldb = dictid;
+
+    /* Write the command to the replication backlog if any. */
+    if (server.repl_backlog) {
+        char aux[REDIS_LONGSTR_SIZE+3];
+
+        /* Add the multi bulk reply length. */
+        aux[0] = '*';
+        len = ll2string(aux+1,sizeof(aux)-1,argc);
+        aux[len+1] = '\r';
+        aux[len+2] = '\n';
+        feedReplicationBacklog(aux,len+3);
+
+        for (j = 0; j < argc; j++) {
+            long objlen = stringObjectLen(argv[j]);
+
+            /* We need to feed the buffer with the object as a bulk reply
+             * not just as a plain string, so create the $..CRLF payload len
+             * and add the final CRLF */
+            aux[0] = '$';
+            len = ll2string(aux+1,sizeof(aux)-1,objlen);
+            aux[len+1] = '\r';
+            aux[len+2] = '\n';
+            feedReplicationBacklog(aux,len+3);
+            feedReplicationBacklogWithObject(argv[j]);
+            feedReplicationBacklog(aux+len+1,2);
+        }
+    }
+
+    /* Write the command to every slave. */
+    listRewind(server.slaves,&li);
+    while((ln = listNext(&li))) {
+        redisClient *slave = ln->value;
+
+        /* Don't feed slaves that are still waiting for BGSAVE to start */
+        if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) continue;
+
+        /* Feed slaves that are waiting for the initial SYNC (so these commands
+         * are queued in the output buffer until the initial SYNC completes),
+         * or are already in sync with the master. */
+
+        /* Add the multi bulk length. */
+        addReplyMultiBulkLen(slave,argc);
+
+        /* Finally any additional argument that was not stored inside the
+         * static buffer if any (from j to argc). */
+        for (j = 0; j < argc; j++)
+            addReplyBulk(slave,argv[j]);
+    }
+}
+         该函数用于主节点将收到的客户端命令请求，缓存到积压队列以及所有状态不是REDIS_REPL_WAIT_BGSAVE_START的从节点的输出缓存中。也就是说，当从节点的状态变为REDIS_REPL_WAIT_BGSAVE_END的那一刻起，主节点就一直会为从节点缓存命令流。
+
+         这里要注意的是：如果当前命令的数据库id不等于server.slaveseldb的话，就需要向积压队列和所有状态不是REDIS_REPL_WAIT_BGSAVE_START的从节点输出缓存中添加一条"SELECT"命令。这也就是为什么在函数replicationSetupSlaveForFullResync中，将server.slaveseldb置为-1原因了。这样保证第一次调用本函数时，强制增加一条"SELECT"命令到积压队列和从节点输出缓存中。
+
+ 
+
+         这里在向从节点的输出缓存中追加命令流时，调用的是addReply类的函数。在之前的《Redis服务器与客户端间的交互》中介绍过，这些函数用于将信息添加到客户端的输出缓存中，这些函数首先都会调用prepareClientToWrite函数，注册socket描述符上的可写事件，然后将回复信息写入到客户端输出缓存中。
+
+         但是在从节点的复制状态变为REDIS_REPL_ONLINE之前，是不能将命令流发送给从节点的。因此，需要在prepareClientToWrite函数中进行特殊处理。在该函数中，有下面的代码：
+
+    /* Only install the handler if not already installed and, in case of
+     * slaves, if the client can actually receive writes. */
+    if (c->bufpos == 0 && listLength(c->reply) == 0 &&
+        (c->replstate == REDIS_REPL_NONE ||
+         (c->replstate == REDIS_REPL_ONLINE && !c->repl_put_online_on_ack)))
+    {
+        /* Try to install the write handler. */
+        if (aeCreateFileEvent(server.el, c->fd, AE_WRITABLE,
+                sendReplyToClient, c) == AE_ERR)
+        {
+            freeClientAsync(c);
+            return REDIS_ERR;
+        }
+    }
+         上面的代码保证了，当从节点客户端的复制状态尚未真正的变为REDIS_REPL_ONLINE时，是不会注册socket描述符上的可写事件的。（c->repl_put_online_on_ack标志的作用，会在下面的” BGSAVE操作完成”小节中讲解）
+
+ 
+
+         还需要注意的是，在写事件的回调函数sendReplyToClient中，有下面的代码：
+
+    if (c->bufpos == 0 && listLength(c->reply) == 0) {
+        c->sentlen = 0;
+        aeDeleteFileEvent(server.el,c->fd,AE_WRITABLE);
+
+        ...
+    }
+         因此，当输出缓存中的内容全部发给客户端之后，就会删除socket描述符上的可写事件。这就保证了在主节点收到SYNC或PSYNC命令后，从节点的输出缓存为空时，该从节点的socket描述符上是没有注册可写事件的。
+
+ 
+
+六：BGSAVE操作完成
+
+         当主节点在后台执行BGSAVE的子进程结束之后，主节点父进程wait到该子进程的退出状态后，会调用updateSlavesWaitingBgsave进行BGSAVE的收尾工作。
+
+         前面在”SYNC或PSYNC命令的处理”一节中提到过，如果主节点为从节点在后台进行RDB数据转储时，如果有新的从节点的SYNC或PSYNC命令到来。则在该新从节点无法复用当前正在转储的RDB数据的情况下，主节点需要在当前BGSAVE操作之后，重新进行一次BGSAVE操作。这就是在updateSlavesWaitingBgsave函数中进行的。
+
+         updateSlavesWaitingBgsave函数的代码如下：
+
+void updateSlavesWaitingBgsave(int bgsaveerr, int type) {
+    listNode *ln;
+    int startbgsave = 0;
+    int mincapa = -1;
+    listIter li;
+
+    listRewind(server.slaves,&li);
+    while((ln = listNext(&li))) {
+        redisClient *slave = ln->value;
+
+        if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) {
+            startbgsave = 1;
+            mincapa = (mincapa == -1) ? slave->slave_capa :
+                                        (mincapa & slave->slave_capa);
+        } else if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_END) {
+            struct redis_stat buf;
+
+            /* If this was an RDB on disk save, we have to prepare to send
+             * the RDB from disk to the slave socket. Otherwise if this was
+             * already an RDB -> Slaves socket transfer, used in the case of
+             * diskless replication, our work is trivial, we can just put
+             * the slave online. */
+            if (type == REDIS_RDB_CHILD_TYPE_SOCKET) {
+                redisLog(REDIS_NOTICE,
+                    "Streamed RDB transfer with slave %s succeeded (socket). Waiting for REPLCONF ACK from slave to enable streaming",
+                        replicationGetSlaveName(slave));
+                /* Note: we wait for a REPLCONF ACK message from slave in
+                 * order to really put it online (install the write handler
+                 * so that the accumulated data can be transfered). However
+                 * we change the replication state ASAP, since our slave
+                 * is technically online now. */
+                slave->replstate = REDIS_REPL_ONLINE;
+                slave->repl_put_online_on_ack = 1;
+                slave->repl_ack_time = server.unixtime; /* Timeout otherwise. */
+            } else {
+                if (bgsaveerr != REDIS_OK) {
+                    freeClient(slave);
+                    redisLog(REDIS_WARNING,"SYNC failed. BGSAVE child returned an error");
+                    continue;
+                }
+                if ((slave->repldbfd = open(server.rdb_filename,O_RDONLY)) == -1 ||
+                    redis_fstat(slave->repldbfd,&buf) == -1) {
+                    freeClient(slave);
+                    redisLog(REDIS_WARNING,"SYNC failed. Can't open/stat DB after BGSAVE: %s", strerror(errno));
+                    continue;
+                }
+                slave->repldboff = 0;
+                slave->repldbsize = buf.st_size;
+                slave->replstate = REDIS_REPL_SEND_BULK;
+                slave->replpreamble = sdscatprintf(sdsempty(),"$%lld\r\n",
+                    (unsigned long long) slave->repldbsize);
+
+                aeDeleteFileEvent(server.el,slave->fd,AE_WRITABLE);
+                if (aeCreateFileEvent(server.el, slave->fd, AE_WRITABLE, sendBulkToSlave, slave) == AE_ERR) {
+                    freeClient(slave);
+                    continue;
+                }
+            }
+        }
+    }
+    if (startbgsave) startBgsaveForReplication(mincapa);
+}
+         参数bgsaveerr表示后台子进程的退出状态；type如果为REDIS_RDB_CHILD_TYPE_DISK，表示是有硬盘复制的RDB数据；如果为REDIS_RDB_CHILD_TYPE_SOCKET，表示是无硬盘复制的RDB数据；
+
+ 
+
+         在函数中，轮训列表server.slaves，针对其中的每一个从节点客户端。如果有从节点客户端当前的复制状态为REDIS_REPL_WAIT_BGSAVE_START，说明该从节点是在后台子进程进行RDB数据转储期间，连接到主节点上的。并且没有合适的其他从节点可以进行复用。这种情况下，需要重新进行RDB数据转储或发送，因此置startbgsave为1，并且置mincapa为，状态为REDIS_REPL_WAIT_BGSAVE_START的所有从节点的"能力"的最小值；
+
+ 
+
+         如果从节点客户端当前的状态为REDIS_REPL_WAIT_BGSAVE_END，说明该从节点正在等待RDB数据处理完成（等待RDB转储到文件完成或者等待RDB数据发送完成）。
+
+         如果type为REDIS_RDB_CHILD_TYPE_SOCKET，说明无硬盘复制的RDB数据已发送给该从节点客户端，因此，置该从节点客户端的复制状态为REDIS_REPL_ONLINE，然后置从节点客户端中的repl_put_online_on_ack属性为1，表示在收到该从节点第一个"replconf ack <offset>"命令之后，才真正的调用putSlaveOnline将该从节点置为REDIS_REPL_ONLINE状态，并且开始发送缓存的命令流；这样处理的目的，已经在之前的”完全重同步时，从节点状态转换”一节中解释过了，不再赘述。
+
+                 
+
+         如果type为REDIS_RDB_CHILD_TYPE_DISK，说明RDB数据已转储到文件，接下来需要把该文件发送给所有从节点客户端。
+
+         如果bgsaveerr为REDIS_ERR，则直接调用freeClient释放该从节点客户端（无硬盘复制的RDB数据发送，已经在函数backgroundSaveDoneHandlerSocket中处理过这种情况了，因此无需在本函数中处理）；
+
+         如果bgsaveerr为REDIS_OK，打开RDB文件，描述符记录到slave->repldbfd中；置slave->repldboff为0；置slave->repldbsize为RDB文件大小；置从节点客户端的复制状态为REDIS_REPL_SEND_BULK；
+
+         置slave->replpreamble为需要发送给从节点客户端的RDB文件的长度信息。从节点通过该信息判断要读取多少字节的RDB数据，这也是为什么有硬盘复制的RDB数据，不需要等待从节点第一个"replconf ack <offset>"命令，而可以直接在发送完RDB数据之后，直接调用putSlaveOnline将该从节点置为REDIS_REPL_ONLINE状态；
+
+         然后重新注册从节点客户端的socket描述符上的可写事件，事件回调函数为sendBulkToSlave；
+
+ 
+
+         轮训完所有从节点客户端之后，如果startbgsave为1，则使用mincapa调用函数startBgsaveForReplication，重新开始一次RDB数据处理过程。
+
+ 
+
+1：有硬盘复制的RDB数据
+
+         有硬盘复制的RDB数据，接下来需要把RDB文件发送给所有从节点。这是通过从节点socket描述符上的可写事件的回调函数sendBulkToSlave实现的。在该函数中，需要用到从节点客户端的下列属性：
+
+         slave->repldbfd，表示打开的RDB文件描述符；
+
+         slave->repldbsize，表示RDB文件的大小；
+
+         slave->repldboff，表示已经向从节点发送的RDB数据的字节数；
+
+         slave->replpreamble，表示需要发送给从节点客户端的RDB文件的长度信息；
+
+ 
+
+         sendBulkToSlave函数的代码如下：
+
+void sendBulkToSlave(aeEventLoop *el, int fd, void *privdata, int mask) {
+    redisClient *slave = privdata;
+    REDIS_NOTUSED(el);
+    REDIS_NOTUSED(mask);
+    char buf[REDIS_IOBUF_LEN];
+    ssize_t nwritten, buflen;
+
+    /* Before sending the RDB file, we send the preamble as configured by the
+     * replication process. Currently the preamble is just the bulk count of
+     * the file in the form "$<length>\r\n". */
+    if (slave->replpreamble) {
+        nwritten = write(fd,slave->replpreamble,sdslen(slave->replpreamble));
+        if (nwritten == -1) {
+            redisLog(REDIS_VERBOSE,"Write error sending RDB preamble to slave: %s",
+                strerror(errno));
+            freeClient(slave);
+            return;
+        }
+        server.stat_net_output_bytes += nwritten;
+        sdsrange(slave->replpreamble,nwritten,-1);
+        if (sdslen(slave->replpreamble) == 0) {
+            sdsfree(slave->replpreamble);
+            slave->replpreamble = NULL;
+            /* fall through sending data. */
+        } else {
+            return;
+        }
+    }
+
+    /* If the preamble was already transfered, send the RDB bulk data. */
+    lseek(slave->repldbfd,slave->repldboff,SEEK_SET);
+    buflen = read(slave->repldbfd,buf,REDIS_IOBUF_LEN);
+    if (buflen <= 0) {
+        redisLog(REDIS_WARNING,"Read error sending DB to slave: %s",
+            (buflen == 0) ? "premature EOF" : strerror(errno));
+        freeClient(slave);
+        return;
+    }
+    if ((nwritten = write(fd,buf,buflen)) == -1) {
+        if (errno != EAGAIN) {
+            redisLog(REDIS_WARNING,"Write error sending DB to slave: %s",
+                strerror(errno));
+            freeClient(slave);
+        }
+        return;
+    }
+    slave->repldboff += nwritten;
+    server.stat_net_output_bytes += nwritten;
+    if (slave->repldboff == slave->repldbsize) {
+        close(slave->repldbfd);
+        slave->repldbfd = -1;
+        aeDeleteFileEvent(server.el,slave->fd,AE_WRITABLE);
+        putSlaveOnline(slave);
+    }
+}
+         如果slave->replpreamble不为NULL，说明需要发送给从节点客户端RDB数据的长度信息，因此，直接调用write向从节点客户端发送slave->replpreamble中的信息。如果写入了部分数据，则将slave->replpreamble更新为未发送的数据，如果slave->replpreamble中的数据已全部发送完成，则释放slave->replpreamble，置其为NULL；否则，直接返回，下次可写事件触发时，接着向从节点发送slave->replpreamble信息；
+
+        
+
+         如果slave->replpreamble为NULL，说明已经发送完长度信息了，接下来就是要发送实际的RDB数据了。
+
+         首先调用lseek将文件指针定位到该文件中未发送的位置，也就是slave->repldboff的位置；然后调用read，读取RDB文件中REDIS_IOBUF_LEN个字节到buf中；
+
+         然后调用write，将已读取的数据发送给从节点客户端，write返回值为nwritten，将其加到slave->repldboff中。
+
+         如果slave->repldboff的值等于slave->repldbsize，则表示RDB文件中的所有数据都发送完成了，因此关闭打开的RDB文件描述符slave->repldbfd；删除socket描述符上的可写事件，然后调用putSlaveOnline函数，更改该从节点客户端的复制状态为REDIS_REPL_ONLINE，接下来就可以开始向该从节点客户端发送累积的命令流了（尽管此时从节点可能还在进行RDB数据的加载，而无暇处理这些累积的命令流。不过好在有TCP输入缓冲区，可以先暂存下来，如果TCP的输入缓存被填满了，则不会向主节点发送ACK，则主节点的TCP输出缓存的剩余空间就会越来越少，当减少到水位线以下时，就不会在触发可写事件了）；
+
+ 
+
+2：无硬盘复制的RDB数据
+
+         对于无硬盘复制的RDB数据，主节点收到从节点发来的第一个"replconf ack <offset>"命令之后，才真正的调用putSlaveOnline将该从节点置为REDIS_REPL_ONLINE状态。
+
+         以上的过程是在replconf命令处理函数replconfCommand中处理的。之前在”从节点建链和握手”小节中，已经看过该函数的部分代码了，接下来是该函数处理"replconf ack <offset>"命令的代码：
+
+        else if (!strcasecmp(c->argv[j]->ptr,"ack")) {
+            /* REPLCONF ACK is used by slave to inform the master the amount
+             * of replication stream that it processed so far. It is an
+             * internal only command that normal clients should never use. */
+            long long offset;
+
+            if (!(c->flags & REDIS_SLAVE)) return;
+            if ((getLongLongFromObject(c->argv[j+1], &offset) != REDIS_OK))
+                return;
+            if (offset > c->repl_ack_off)
+                c->repl_ack_off = offset;
+            c->repl_ack_time = server.unixtime;
+            /* If this was a diskless replication, we need to really put
+             * the slave online when the first ACK is received (which
+             * confirms slave is online and ready to get more data). */
+            if (c->repl_put_online_on_ack && c->replstate == REDIS_REPL_ONLINE)
+                putSlaveOnline(c);
+            /* Note: this command does not reply anything! */
+            return;
+        }
+         可见，这里在客户端的repl_put_online_on_ack属性为1，并且复制状态为REDIS_REPL_ONLINE的情况下，调用putSlaveOnline函数，将该从节点的状态真正置为REDIS_REPL_ONLINE，并开始向该从节点发送累积的命令流。
+
+ 
+
+3：putSlaveOnline函数
+
+         完全重同步的最后一步，就是调用putSlaveOnline函数，将从节点客户端的复制状态置为REDIS_REPL_ONLINE，并开始向该从节点发送累积的命令流。
+
+         该函数的代码如下：
+
+void putSlaveOnline(redisClient *slave) {
+    slave->replstate = REDIS_REPL_ONLINE;
+    slave->repl_put_online_on_ack = 0;
+    slave->repl_ack_time = server.unixtime; /* Prevent false timeout. */
+    if (aeCreateFileEvent(server.el, slave->fd, AE_WRITABLE,
+        sendReplyToClient, slave) == AE_ERR) {
+        redisLog(REDIS_WARNING,"Unable to register writable event for slave bulk transfer: %s", strerror(errno));
+        freeClient(slave);
+        return;
+    }
+    refreshGoodSlavesCount();
+    redisLog(REDIS_NOTICE,"Synchronization with slave %s succeeded",
+        replicationGetSlaveName(slave));
+}
+         首先将从节点客户端的复制状态置为REDIS_REPL_ONLINE，置客户端属性slave->repl_put_online_on_ack为0。表示该从节点已完成初始同步，接下来进入命令传播阶段；
+
+         然后，重新注册该从节点客户端的socket描述符上的可写事件，事件回调函数为sendReplyToClient，用于向从节点发送缓存的命令流。该函数也是向普通客户端回复命令时的回调函数；
+
+         最后，调用refreshGoodSlavesCount，更新当前状态正常的从节点数量；
+
+
+本文主要讲解主节点部分重同步的实现，以及主从复制中的其他功能。本文是Redis主从复制机制的最后一篇文章。
+
+ 
+
+         主节点在收到从节点发来的PSYNC命令之前，主节点的部分重同步流程，与完全重同步流程是一样的。在收到PSYNC命令后，主节点调用masterTryPartialResynchronization函数，尝试进行部分重同步。
+
+         首先看一下部分重同步的实现原理，然后在看具体的实现。
+
+ 
+
+一：部分重同步原理
+
+         Redis实现的部分重同步功能，依赖于以下三个属性：
+
+         a：主节点的复制偏移量和从节点的复制偏移量；
+
+         b：主节点的复制积压队列( replication backlog )；
+
+         c：Redis实例的运行ID；
+
+ 
+
+         主节点维持一个积压队列。当它收到客户端发来的命令请求时，除了将该命令请求缓存到从节点的输出缓存，还会将命令追加到积压队列中。
+
+         积压队列中的每个字节，都有一个全局性的偏移量。主节点维持一个计数器作为复制偏移量，当主节点回复从节点”+FULLRESYNC  <runid>  <offset>”信息时，其中的offset就是当前主节点的复制偏移量的值。当从节点收到该消息后，保存<runid>，取出<offset>作为自己的复制偏移量的初始值。
+
+ 
+
+         当主节点收到客户端发来的，长度为len的命令请求之后，就会将len增加到复制偏移量上。然后将该命令请求追加到积压队列中，并且发给每个从节点。从节点收到主节点发来的命令之后，同样会将命令长度len增加到自己的复制偏移量上，这就保证了主从节点上复制偏移量的一致性，也就是数据库状态的一致性。
+
+         积压队列是一个空间有限的循环队列，随着命令的追加，不断覆盖之前的命令，积压队列中累积的命令偏移量范围也在不断发生变化。
+
+         当从节点断链一段时间，然后重连主节点时，向主节点发来”PSYNC  <runid>  <offset>”命令。其中的<runid>就是断链前保存的主节点运行ID，<offset>就是自己的复制偏移量加1，表示需要接收的下一条命令首字节的偏移量。
+
+         主节点收到该”PSYNC”消息后，首先判断<runid>是否与自己的运行ID匹配，如果不匹配，则不能执行部分重同步；然后判断偏移量<offset>是否还在积压队列中累积的命令范围内，如果在，则说明可以进行部分重同步。
+
+ 
+
+         要理解部分重同步，必须理解积压队列的实现。
+
+ 
+
+二：积压队列的实现
+
+         Redis中的积压队列server.repl_backlog，是一个固定大小的循环队列。所谓循环队列，举个简单的例子，假设server.repl_backlog的大小为10个字节，则向其中插入数据”abcdefg”之后，该积压队列的内容如下：
+
+
+
+         现在插入数据”hijklmn”，则积压队列的内容如下：
+
+
+
+         也就是说，插入数据时，一旦到达了积压队列的尾部，则重新从头部开始插入，覆盖最早插入的内容。
+
+ 
+
+         要理解积压队列，关键在于理解下面的，有关积压队列的属性：
+
+         server.master_repl_offset：一个全局性的计数器。该属性只有存在积压队列的情况下才会增加计数。当存在积压队列时，每次收到客户端发来的，长度为len的请求命令时，就会将server.master_repl_offset增加len。
+
+         该属性也就是所谓的主节点上的复制偏移量。当从节点发来PSYNC命令后，主节点回复从节点"+FULLRESYNC  <runid> <offset>"消息时，其中的offset就是取的主节点当时的server.master_repl_offset的值。这样当从节点收到该消息后，将该值保存在复制偏移量server.master->reploff中。
+
+         进入命令传播阶段后，每当主节点收到客户端的命令请求，则将命令的长度增加到server.master_repl_offset上，然后将命令传播给从节点，从节点收到后，也会将命令长度加到server.master->reploff上，从而保证了主节点上的复制偏移量server.master_repl_offset和从节点上的复制偏移量server.master->reploff的一致性。
+
+         需要注意的，server.master_repl_offset的值并不是严格的从0开始增加的。它只是一个计数器，只要能保证主从节点上的复制偏移量一致即可。比如如果它的初始值为10，发送给从节点后，从节点保存的复制偏移量初始值也为10，当新的命令来临时，主从节点上的复制偏移量都会相应增加该命令的长度，因此这并不影响主从节点上偏移量的一致性。
+
+ 
+
+         server.repl_backlog_size：积压队列server.repl_backlog的总容量。
+
+ 
+
+         server.repl_backlog_idx：在积压队列server.repl_backlog中，每次写入新数据时的起始索引，是一个相对于server.repl_backlog的索引。当server.repl_backlog_idx 等于server.repl_backlog的长度server.repl_backlog_size时，置其值为0，表示从头开始。
+
+         以上面那个积压队列为例，server.repl_backlog_idx的初始值为0，插入”abcdefg”之后，该值变为7；插入”hijklmn”之后，该值变为4。
+
+ 
+
+         server.repl_backlog_histlen：积压队列server.repl_backlog中，当前累积的数据量的大小。该值不会超过积压队列的总容量server.repl_backlog_size。
+
+ 
+
+         server.repl_backlog_off：在积压队列中，最早保存的命令的首字节，在全局范围内（而非积压队列内）的偏移量。在累积命令流时，下列等式恒成立：
+
+server.master_repl_offset - server.repl_backlog_off + 1 = server.repl_backlog_histlen。
+
+         还是以上面那个积压队列为例：如果在插入”abcdefg”之前，server.master_repl_offset的初始值为2，则插入”abcdefg”之后，积压队列中当前的数据量，也就是属性server.repl_backlog_histlen的值为7。属性server.master_repl_offset的值变为9，此时命令的首字节为”a”，它在全局的偏移量就是3。满足上面的等式。
+
+         在插入”hijklmn”之后，积压队列中当前的数据量，也就是属性server.repl_backlog_histlen的值为10。属性server.master_repl_offset的值变为16。此时最早保存的命令首字节为”e”，它在全局的偏移量是7，满足上面的等式。
+
+         根据上面的等式，主节点的积压队列中累积的命令流，首字节和尾字节在全局范围内的偏移量分别是server.repl_backlog_off和server.master_repl_offset。
+
+ 
+
+         当从节点断链重连后，向主节点发送”PSYNC  <runid>  <offset>”消息，其中的<offset>表示需要接收的下一条命令首字节的偏移量。也就是server.master->reploff + 1。
+
+         主节点判断<offset>的值，如果该值在下面的范围内，就表示可以进行部分重同步：
+
+[server.repl_backlog_off, server.repl_backlog_off + server.repl_backlog_histlen]。如果<offset>的值为server.repl_backlog_off+ server.repl_backlog_histlen，也就是server.master_repl_offset + 1，说明从节点断链期间，主节点没有收到过新的命令请求。
+
+ 
+
+三：部分重同步
+
+1：masterTryPartialResynchronization函数
+
+         主节点收到从节点的”PSYNC  <runid>  <offset>”消息后，调用函数masterTryPartialResynchronization尝试进行部分重同步。该函数的代码如下：
+
+int masterTryPartialResynchronization(redisClient *c) {
+    long long psync_offset, psync_len;
+    char *master_runid = c->argv[1]->ptr;
+    char buf[128];
+    int buflen;
+
+    /* Is the runid of this master the same advertised by the wannabe slave
+     * via PSYNC? If runid changed this master is a different instance and
+     * there is no way to continue. */
+    if (strcasecmp(master_runid, server.runid)) {
+        /* Run id "?" is used by slaves that want to force a full resync. */
+        if (master_runid[0] != '?') {
+            redisLog(REDIS_NOTICE,"Partial resynchronization not accepted: "
+                "Runid mismatch (Client asked for runid '%s', my runid is '%s')",
+                master_runid, server.runid);
+        } else {
+            redisLog(REDIS_NOTICE,"Full resync requested by slave %s",
+                replicationGetSlaveName(c));
+        }
+        goto need_full_resync;
+    }
+
+    /* We still have the data our slave is asking for? */
+    if (getLongLongFromObjectOrReply(c,c->argv[2],&psync_offset,NULL) !=
+       REDIS_OK) goto need_full_resync;
+    if (!server.repl_backlog ||
+        psync_offset < server.repl_backlog_off ||
+        psync_offset > (server.repl_backlog_off + server.repl_backlog_histlen))
+    {
+        redisLog(REDIS_NOTICE,
+            "Unable to partial resync with slave %s for lack of backlog (Slave request was: %lld).", replicationGetSlaveName(c), psync_offset);
+        if (psync_offset > server.master_repl_offset) {
+            redisLog(REDIS_WARNING,
+                "Warning: slave %s tried to PSYNC with an offset that is greater than the master replication offset.", replicationGetSlaveName(c));
+        }
+        goto need_full_resync;
+    }
+
+    /* If we reached this point, we are able to perform a partial resync:
+     * 1) Set client state to make it a slave.
+     * 2) Inform the client we can continue with +CONTINUE
+     * 3) Send the backlog data (from the offset to the end) to the slave. */
+    c->flags |= REDIS_SLAVE;
+    c->replstate = REDIS_REPL_ONLINE;
+    c->repl_ack_time = server.unixtime;
+    c->repl_put_online_on_ack = 0;
+    listAddNodeTail(server.slaves,c);
+    /* We can't use the connection buffers since they are used to accumulate
+     * new commands at this stage. But we are sure the socket send buffer is
+     * empty so this write will never fail actually. */
+    buflen = snprintf(buf,sizeof(buf),"+CONTINUE\r\n");
+    if (write(c->fd,buf,buflen) != buflen) {
+        freeClientAsync(c);
+        return REDIS_OK;
+    }
+    psync_len = addReplyReplicationBacklog(c,psync_offset);
+    redisLog(REDIS_NOTICE,
+        "Partial resynchronization request from %s accepted. Sending %lld bytes of backlog starting from offset %lld.",
+            replicationGetSlaveName(c),
+            psync_len, psync_offset);
+    /* Note that we don't need to set the selected DB at server.slaveseldb
+     * to -1 to force the master to emit SELECT, since the slave already
+     * has this state from the previous connection with the master. */
+
+    refreshGoodSlavesCount();
+    return REDIS_OK; /* The caller can return, no full resync needed. */
+
+need_full_resync:
+    /* We need a full resync for some reason... Note that we can't
+     * reply to PSYNC right now if a full SYNC is needed. The reply
+     * must include the master offset at the time the RDB file we transfer
+     * is generated, so we need to delay the reply to that moment. */
+    return REDIS_ERR;
+}
+         该函数返回REDIS_ERR表示不能进行部分重同步；返回REDIS_OK表示可以进行部分重同步。
+
+ 
+
+         首先比对"PSYNC"命令参数中的运行ID和本身的ID号是否匹配，如果不匹配，则需要进行完全重同步，因此直接返回REDIS_ERR即可；
+
+         然后取出"PSYNC"命令参数中的从节点复制偏移到psync_offset中，该值表示从节点需要接收的下一条命令首字节的偏移量。接下来根据积压队列的状态判断是否可以进行部分重同步，判断的条件上一节中已经讲过了，不再赘述。
+
+ 
+
+         经过上面的检查后，说明可以进行部分重同步了。因此：首先将REDIS_SLAVE标记增加到客户端标志位中；然后将从节点客户端的复制状态置为REDIS_REPL_ONLINE，并且将c->repl_put_online_on_ack置为0。这点很重要，因为只有当c->replstate为REDIS_REPL_ONLINE，并且c->repl_put_online_on_ack为0时，在函数prepareClientToWrite中，才为socket描述符注册可写事件，这样才能将输出缓存中的内容发送给从节点客户端；
+
+ 
+
+         接下来，直接向客户端的socket描述符上输出"+CONTINUE\r\n"命令，这里不能用输出缓存，因为输出缓存只能用于累积命令流。之前主节点向从节点发送的信息很少，因此内核的输出缓存中应该会有空间，因此这里直接的write操作一般不会出错；
+
+ 
+
+         接下来，调用addReplyReplicationBacklog，将积压队列中psync_offset之后的数据复制到客户端输出缓存中，注意这里不需要设置server.slaveseldb为-1，因为从节点是接着上次连接进行的；
+
+         最后，调用refreshGoodSlavesCount，更新当前状态正常的从节点数量；
+
+ 
+
+2：addReplyReplicationBacklog函数
+
+       主节点确认可以为从节点进行部分重同步时，首先就是调用addReplyReplicationBacklog函数，将积压队列中，全局偏移量为offset的字节，到尾字节之间的所有内容，追加到从节点客户端的输出缓存中。该函数的代码如下：
+
+long long addReplyReplicationBacklog(redisClient *c, long long offset) {
+    long long j, skip, len;
+
+    redisLog(REDIS_DEBUG, "[PSYNC] Slave request offset: %lld", offset);
+
+    if (server.repl_backlog_histlen == 0) {
+        redisLog(REDIS_DEBUG, "[PSYNC] Backlog history len is zero");
+        return 0;
+    }
+
+    redisLog(REDIS_DEBUG, "[PSYNC] Backlog size: %lld",
+             server.repl_backlog_size);
+    redisLog(REDIS_DEBUG, "[PSYNC] First byte: %lld",
+             server.repl_backlog_off);
+    redisLog(REDIS_DEBUG, "[PSYNC] History len: %lld",
+             server.repl_backlog_histlen);
+    redisLog(REDIS_DEBUG, "[PSYNC] Current index: %lld",
+             server.repl_backlog_idx);
+
+    /* Compute the amount of bytes we need to discard. */
+    skip = offset - server.repl_backlog_off;
+    redisLog(REDIS_DEBUG, "[PSYNC] Skipping: %lld", skip);
+
+    /* Point j to the oldest byte, that is actaully our
+     * server.repl_backlog_off byte. */
+    j = (server.repl_backlog_idx +
+        (server.repl_backlog_size-server.repl_backlog_histlen)) %
+        server.repl_backlog_size;
+    redisLog(REDIS_DEBUG, "[PSYNC] Index of first byte: %lld", j);
+
+    /* Discard the amount of data to seek to the specified 'offset'. */
+    j = (j + skip) % server.repl_backlog_size;
+
+    /* Feed slave with data. Since it is a circular buffer we have to
+     * split the reply in two parts if we are cross-boundary. */
+    len = server.repl_backlog_histlen - skip;
+    redisLog(REDIS_DEBUG, "[PSYNC] Reply total length: %lld", len);
+    while(len) {
+        long long thislen =
+            ((server.repl_backlog_size - j) < len) ?
+            (server.repl_backlog_size - j) : len;
+
+        redisLog(REDIS_DEBUG, "[PSYNC] addReply() length: %lld", thislen);
+        addReplySds(c,sdsnewlen(server.repl_backlog + j, thislen));
+        len -= thislen;
+        j = 0;
+    }
+    return server.repl_backlog_histlen - skip;
+}
+         在该函数中，首先计算需要在积压队列中跳过的字节数skip，offset为从节点所需数据的首字节的全局偏移量，server.repl_backlog_off表示积压队列中最早累积的命令首字节的全局偏移量，因此skip等于offset - server.repl_backlog_off；
+
+ 
+
+         接下来，计算积压队列中，最早累积的命令首字节，在积压队列中的索引j，server.repl_backlog_idx-1表示积压队列中，命令尾字节在积压队列中的索引，server.repl_backlog_size表示积压队列的总容量，server.repl_backlog_histlen表示积压队列中累积的命令的大小，因此得到j的值为：(server.repl_backlog_idx+(server.repl_backlog_size-server.repl_backlog_histlen))%server.repl_backlog_size;
+
+ 
+
+         接下来，将j置为需要数据首字节相对于积压队列中的索引；然后计算总共需要复制的字节数len；然后就是将数据循环追加到从节点客户端的输出缓存中（追加之前，已经在函数syncCommand保证该输出缓存为空）；
+
+ 
+
+3：feedReplicationBacklog函数
+
+         主节点收到客户端发来的命令请求后，除了需要将命令累积到从节点的输出缓存中，还需要将该命令追加到积压队列中。feedReplicationBacklog函数就是用于实现将命令追加到积压队列中的函数。
+
+         它的代码如下：
+
+void feedReplicationBacklog(void *ptr, size_t len) {
+    unsigned char *p = ptr;
+
+    server.master_repl_offset += len;
+
+    /* This is a circular buffer, so write as much data we can at every
+     * iteration and rewind the "idx" index if we reach the limit. */
+    while(len) {
+        size_t thislen = server.repl_backlog_size - server.repl_backlog_idx;
+        if (thislen > len) thislen = len;
+        memcpy(server.repl_backlog+server.repl_backlog_idx,p,thislen);
+        server.repl_backlog_idx += thislen;
+        if (server.repl_backlog_idx == server.repl_backlog_size)
+            server.repl_backlog_idx = 0;
+        len -= thislen;
+        p += thislen;
+        server.repl_backlog_histlen += thislen;
+    }
+    if (server.repl_backlog_histlen > server.repl_backlog_size)
+        server.repl_backlog_histlen = server.repl_backlog_size;
+    /* Set the offset of the first byte we have in the backlog. */
+    server.repl_backlog_off = server.master_repl_offset -
+                              server.repl_backlog_histlen + 1;
+}
+         函数中，首先将len增加到主节点复制偏移量server.master_repl_offset中；
+
+        
+
+         然后进入循环，将ptr追加到积压队列中，在循环中：
+
+         首先计算本次追加的数据量thislen。server.repl_backlog_size表示积压队列的总容量，server.repl_backlog_idx-1表示积压队列中，累积的命令尾字节在积压队列中的索引，因此thislen等于server.repl_backlog_size-server.repl_backlog_idx，表示在积压队列的尾部之前，还可以追加多少字节。如果thislen大于len，则调整其值；
+
+         然后将p中的thislen个字节，复制到首地址为server.repl_backlog+server.repl_backlog_idx的内存中；
+
+         接下来更新server.repl_backlog_idx的值，如果其值等于积压队列的总容量，表示已经到达积压队列的尾部，因此下一次添加数据时，需要重新从头部开始，因此置server.repl_backlog_idx为0；
+
+         然后更新len和p；
+
+         最后更新server.repl_backlog_histlen的值；该值表示积压队列中累积的命令总量；
+
+        
+
+         server.repl_backlog_histlen的值最大不能超过积压队列的总容量，因此将所有数据追加到积压队列后，如果其值已经大于总容量server.repl_backlog_size，则重新置其值为server.repl_backlog_size；
+
+         最后，更新server.repl_backlog_off的值，使其满足等式：
+
+server.repl_backlog_histlen=server.master_repl_offset-server.repl_backlog_off+1;
+
+ 
+
+四：定时监测函数replicationCron
+
+         主从节点为了探测网络是连通的，每隔一段时间，都会向对方发送一定的心跳信息。
+
+         之前在《Resis主从复制之从节点流程》介绍过，从节点在接受完RDB数据之后，清空本身数据库时，以及加载RDB数据时，都会时不时的向主节点发送一个换行符”\n”（通过回调函数replicationSendNewlineToMaster实现）；而且，当从节点本身的复制状态变为REDIS_REPL_CONNECTED之后，每隔1秒钟就会向主节点发送一个"REPLCONF ACK  <offset>"命令。以上的”\n”和"REPLCONF”命令都是从节点向主节点发送的心跳消息。
+
+         主节点每隔一段时间，也会向从节点发送”PING”命令，以及换行符”\n”。这是主节点向从节点发送的心跳消息。
+
+ 
+
+         主从节点收到对方发来的消息后，都会更新一个时间戳。双方都会定时检查各自时间戳的最后更新时间。这样，当主从节点间长时间没有交互时，说明网络出现了问题，主从双方都可以探测到该问题，从而断开连接；
+
+         以上这些探测功能就是在定时执行的函数replicationCron中实现的，该函数每隔1秒钟调用一次。该函数的代码如下：
+
+void replicationCron(void) {
+    static long long replication_cron_loops = 0;
+
+    /* Non blocking connection timeout? */
+    if (server.masterhost &&
+        (server.repl_state == REDIS_REPL_CONNECTING ||
+         slaveIsInHandshakeState()) &&
+         (time(NULL)-server.repl_transfer_lastio) > server.repl_timeout)
+    {
+        redisLog(REDIS_WARNING,"Timeout connecting to the MASTER...");
+        undoConnectWithMaster();
+    }
+
+    /* Bulk transfer I/O timeout? */
+    if (server.masterhost && server.repl_state == REDIS_REPL_TRANSFER &&
+        (time(NULL)-server.repl_transfer_lastio) > server.repl_timeout)
+    {
+        redisLog(REDIS_WARNING,"Timeout receiving bulk data from MASTER... If the problem persists try to set the 'repl-timeout' parameter in redis.conf to a larger value.");
+        replicationAbortSyncTransfer();
+    }
+
+    /* Timed out master when we are an already connected slave? */
+    if (server.masterhost && server.repl_state == REDIS_REPL_CONNECTED &&
+        (time(NULL)-server.master->lastinteraction) > server.repl_timeout)
+    {
+        redisLog(REDIS_WARNING,"MASTER timeout: no data nor PING received...");
+        freeClient(server.master);
+    }
+
+    /* Check if we should connect to a MASTER */
+    if (server.repl_state == REDIS_REPL_CONNECT) {
+        redisLog(REDIS_NOTICE,"Connecting to MASTER %s:%d",
+            server.masterhost, server.masterport);
+        if (connectWithMaster() == REDIS_OK) {
+            redisLog(REDIS_NOTICE,"MASTER <-> SLAVE sync started");
+        }
+    }
+
+    /* Send ACK to master from time to time.
+     * Note that we do not send periodic acks to masters that don't
+     * support PSYNC and replication offsets. */
+    if (server.masterhost && server.master &&
+        !(server.master->flags & REDIS_PRE_PSYNC))
+        replicationSendAck();
+
+    /* If we have attached slaves, PING them from time to time.
+     * So slaves can implement an explicit timeout to masters, and will
+     * be able to detect a link disconnection even if the TCP connection
+     * will not actually go down. */
+    listIter li;
+    listNode *ln;
+    robj *ping_argv[1];
+
+    /* First, send PING according to ping_slave_period. */
+    if ((replication_cron_loops % server.repl_ping_slave_period) == 0) {
+        ping_argv[0] = createStringObject("PING",4);
+        replicationFeedSlaves(server.slaves, server.slaveseldb,
+            ping_argv, 1);
+        decrRefCount(ping_argv[0]);
+    }
+
+    /* Second, send a newline to all the slaves in pre-synchronization
+     * stage, that is, slaves waiting for the master to create the RDB file.
+     * The newline will be ignored by the slave but will refresh the
+     * last-io timer preventing a timeout. In this case we ignore the
+     * ping period and refresh the connection once per second since certain
+     * timeouts are set at a few seconds (example: PSYNC response). */
+    listRewind(server.slaves,&li);
+    while((ln = listNext(&li))) {
+        redisClient *slave = ln->value;
+
+        if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START ||
+            (slave->replstate == REDIS_REPL_WAIT_BGSAVE_END &&
+             server.rdb_child_type != REDIS_RDB_CHILD_TYPE_SOCKET))
+        {
+            if (write(slave->fd, "\n", 1) == -1) {
+                /* Don't worry, it's just a ping. */
+            }
+        }
+    }
+
+    /* Disconnect timedout slaves. */
+    if (listLength(server.slaves)) {
+        listIter li;
+        listNode *ln;
+
+        listRewind(server.slaves,&li);
+        while((ln = listNext(&li))) {
+            redisClient *slave = ln->value;
+
+            if (slave->replstate != REDIS_REPL_ONLINE) continue;
+            if (slave->flags & REDIS_PRE_PSYNC) continue;
+            if ((server.unixtime - slave->repl_ack_time) > server.repl_timeout)
+            {
+                redisLog(REDIS_WARNING, "Disconnecting timedout slave: %s",
+                    replicationGetSlaveName(slave));
+                freeClient(slave);
+            }
+        }
+    }
+
+    /* If we have no attached slaves and there is a replication backlog
+     * using memory, free it after some (configured) time. */
+    if (listLength(server.slaves) == 0 && server.repl_backlog_time_limit &&
+        server.repl_backlog)
+    {
+        time_t idle = server.unixtime - server.repl_no_slaves_since;
+
+        if (idle > server.repl_backlog_time_limit) {
+            freeReplicationBacklog();
+            redisLog(REDIS_NOTICE,
+                "Replication backlog freed after %d seconds "
+                "without connected slaves.",
+                (int) server.repl_backlog_time_limit);
+        }
+    }
+
+    /* If AOF is disabled and we no longer have attached slaves, we can
+     * free our Replication Script Cache as there is no need to propagate
+     * EVALSHA at all. */
+    if (listLength(server.slaves) == 0 &&
+        server.aof_state == REDIS_AOF_OFF &&
+        listLength(server.repl_scriptcache_fifo) != 0)
+    {
+        replicationScriptCacheFlush();
+    }
+
+    /* If we are using diskless replication and there are slaves waiting
+     * in WAIT_BGSAVE_START state, check if enough seconds elapsed and
+     * start a BGSAVE.
+     *
+     * This code is also useful to trigger a BGSAVE if the diskless
+     * replication was turned off with CONFIG SET, while there were already
+     * slaves in WAIT_BGSAVE_START state. */
+    if (server.rdb_child_pid == -1 && server.aof_child_pid == -1) {
+        time_t idle, max_idle = 0;
+        int slaves_waiting = 0;
+        int mincapa = -1;
+        listNode *ln;
+        listIter li;
+
+        listRewind(server.slaves,&li);
+        while((ln = listNext(&li))) {
+            redisClient *slave = ln->value;
+            if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) {
+                idle = server.unixtime - slave->lastinteraction;
+                if (idle > max_idle) max_idle = idle;
+                slaves_waiting++;
+                mincapa = (mincapa == -1) ? slave->slave_capa :
+                                            (mincapa & slave->slave_capa);
+            }
+        }
+
+        if (slaves_waiting && max_idle > server.repl_diskless_sync_delay) {
+            /* Start a BGSAVE. Usually with socket target, or with disk target
+             * if there was a recent socket -> disk config change. */
+            startBgsaveForReplication(mincapa);
+        }
+    }
+
+    /* Refresh the number of slaves with lag <= min-slaves-max-lag. */
+    refreshGoodSlavesCount();
+    replication_cron_loops++; /* Incremented with frequency 1 HZ. */
+}
+         server.repl_timeout属性是用户在配置文件中配置的"repl-timeout"选项的值，表示主从复制期间最大的超时时间，默认为60秒；
+
+        
+
+         从从节点向主节点建链开始，到读取完主节点发来的RDB数据为止，也就是复制状态从REDIS_REPL_CONNECTING到REDIS_REPL_TRANSFER期间，每当从节点读取到主节点发来的信息后，都会更新server.repl_transfer_lastio属性为当时的Unix时间戳；
+
+         当从节点处于REDIS_REPL_CONNECTING状态或者握手状态时，并且最后一次更新server.repl_transfer_lastio的时间已经超过了最大超时时间，则调用函数undoConnectWithMaster，断开与主节点间的连接；
+
+         当从节点处于REDIS_REPL_TRANSFER状态（接收RDB数据），并且最后一次更新server.repl_transfer_lastio的时间已经超过了最大超时时间，则调用函数replicationAbortSyncTransfer，终止本次复制过程；
+
+ 
+
+         在读取客户端发来的消息的函数readQueryFromClient中，每次从socket描述符上读取到数据后，就会更新客户端结构中的lastinteraction属性。
+
+         因此，当从节点处于REDIS_REPL_CONNECTED状态时（命令传播阶段），如果最后一次更新server.master->lastinteractio的时间已经超过了最大超时时间，则调用函数freeClient，断开与主节点间的连接；
+
+         以上就是从节点探测网络是否连通的方法；
+
+ 
+
+         如果当前从节点的复制状态为REDIS_REPL_CONNECT，则调用connectWithMaster开始向主节点发起建链请求。从节点收到客户端发来的”SLAVEOF”命令，或从节点实例启动，从配置文件中读取到了"slaveof"选项后，就将复制状态置为REDIS_REPL_CONNECT，而在此处开始向主节点发起TCP建链；
+
+ 
+
+         如果当前从节点的server.master属性已配置好，说明该从节点已处于REDIS_REPL_CONNECTED状态，并且主节点支持PSYNC命令的情况下，调用函数replicationSendAck向主节点发送"REPLCONF ACK <offset>"消息，这就是从节点向主节点发送心跳消息；
+
+ 
+
+         主节点每隔一定时间也会向从节点发送心跳消息，以使从节点可以更新属性server.repl_transfer_lastio的值。
+
+         首先是每隔server.repl_ping_slave_period秒，向从节点输出缓存以及积压队列中追加"PING"命令；
+
+         然后就是轮训列表server.slaves，对于处于REDIS_REPL_WAIT_BGSAVE_START状态的从节点，或者处于REDIS_REPL_WAIT_BGSAVE_END状态的从节点，且当目前是无硬盘复制的RDB转储时，直接调用write向从节点发送一个换行符；
+
+ 
+
+         当主节点将从节点的复制状态置为REDIS_REPL_ONLINE后，每当收到从节点发来的换行符"\n"（从节点加载RDB数据时发送）或者"REPLCONF ACK <offset>"信息时，就会更新该从节点客户端的repl_ack_time属性。
+
+         因此，主节点轮训server.slaves列表，如果其中的某个从节点的repl_ack_time属性的最近一次的更新时间，已经超过了最大超时时间，则调用函数freeClient，断开与从节点间的连接；
+
+         以上就是主节点探测网络是否连通的方法；
+
+ 
+
+         在freeClient函数中，每当释放了一个从节点客户端后，都会判断列表server.slaves当前长度，如果其长度为0，说明该主节点已经没有连接的从节点了，因此就会设置属性server.repl_no_slaves_since为当时的时间戳；
+
+         server.repl_backlog_time_limit属性值表示当主节点没有从节点连接时，积压队列最长的存活时间，该值默认为1个小时。
+
+         因此，如果主节点当前已没有从节点连接，并且配置了server.repl_backlog_time_limit属性值，并且积压队列还存在的情况下，则判断属性server.repl_no_slaves_since最近一次更新时间是否已经超过配置的server.repl_backlog_time_limit属性值，若已超过，则调用freeReplicationBacklog释放积压队列；
+
+        
+
+         如果主节点当前已没有从节点连接，并且Redis实例关闭了AOF功能，并且列表server.repl_scriptcache_fifo的长度非0，则调用函数replicationScriptCacheFlush；
+
+ 
+
+         之前在函数syncCommand中介绍过，如果当前没有进行RDB数据转储，则当支持无硬盘复制的RDB数据的从节点的"PSYNC"命令到来时，并非立即启动BGSAVE操作，而是等待一段时间再开始。这是因为无硬盘复制的RDB数据无法复用，Redis通过这种方式来等待更多的从节点到来，从而减少执行BGSAVE操作的次数；
+
+         配置文件中"repl-diskless-sync-delay"选项的值，记录在server.repl_diskless_sync_delay中，该值就是主节点等待的最大时间。
+
+         因此，轮训列表server.slaves，针对其中处于REDIS_REPL_WAIT_BGSAVE_START状态的从节点，得到这些从节点的空闲时间的最大值max_idle，以及能力的最小值mincapa；
+
+         轮训完之后，如果max_idle大于选项server.repl_diskless_sync_delay的值，则以参数mincapa调用函数startBgsaveForReplication，开始BGSAVE操作；
+
+ 
+
+         最后，调用refreshGoodSlavesCount，更新当前状态正常的从节点数量。
+
+ 
+
+五：min-slaves选项
+
+         Redis主节点可以配置"min-slaves-to-write"和"min-slaves-max-lag"两个选项用于防止主节点在不安全的情况下执行写命令。
+
+         这两个选项的意义在于：如果从节点与主节点的最后交互时间，距离当前时间小于"min-slaves-max-lag"的值，则认为该从节点状态是连接的。主节点定时计算当前状态为连接的从节点数目，如果该数目小于"min-slaves-to-write"的值，则主节点拒绝执行写数据库的命令。
+
+ 
+
+         计算当前状态为连接的从节点数目，是通过函数refreshGoodSlavesCount实现的。该函数会在定时函数replicationCron中调用，也就是每隔1秒就会调用一次。该函数的代码如下：
+
+void refreshGoodSlavesCount(void) {
+    listIter li;
+    listNode *ln;
+    int good = 0;
+
+    if (!server.repl_min_slaves_to_write ||
+        !server.repl_min_slaves_max_lag) return;
+
+    listRewind(server.slaves,&li);
+    while((ln = listNext(&li))) {
+        redisClient *slave = ln->value;
+        time_t lag = server.unixtime - slave->repl_ack_time;
+
+        if (slave->replstate == REDIS_REPL_ONLINE &&
+            lag <= server.repl_min_slaves_max_lag) good++;
+    }
+    server.repl_good_slaves_count = good;
+}
+         从节点的复制状态为REDIS_REPL_ONLINE之后，主节点收到从节点发来的”REPLCONF ACK <offset>”命令时，就会更新该从节点客户端repl_ack_time属性，以此属性判断从节点与主节点的最后交互时间。
+
+         该函数中，如果没有配置server.repl_min_slaves_to_write或者server.repl_min_slaves_max_lag，则直接返回；
+
+         然后轮训列表server.slaves，针对其中的每个从节点客户端，得到其slave->repl_ack_time属性与当前时间的差值，如果该差值小于等于server.repl_min_slaves_max_lag的值，则说明该从节点状态良好，计数器加1。
+
+         最后将状态良好的从节点数目更新到server.repl_good_slaves_count中。
+
+ 
+
+         在处理客户端命令的函数processCommand中，有下面的代码：
+
+    /* Don't accept write commands if there are not enough good slaves and
+     * user configured the min-slaves-to-write option. */
+    if (server.masterhost == NULL &&
+        server.repl_min_slaves_to_write &&
+        server.repl_min_slaves_max_lag &&
+        c->cmd->flags & REDIS_CMD_WRITE &&
+        server.repl_good_slaves_count < server.repl_min_slaves_to_write)
+    {
+        flagTransaction(c);
+        addReply(c, shared.noreplicaserr);
+        return REDIS_OK;
+    }
+         因此，只要当前要执行的是写数据库命令，而且server.repl_good_slaves_count的值小于server.repl_min_slaves_to_write的值，则会回复客户端错误信息，并直接返回而不再处理。
+
+ 
+
+六：WAIT命令
+
+         WAIT命令是自Redis3.0.0版本开始引入的。客户端发送”WAIT  <numslaves>  <timeout>”命令后，会被阻塞。直到以下的两个条件之一发生：
+
+         a：在WAIT命令之前的写数据库命令，都已经发给从库，并且至少<numslaves>个从库确认收到了；
+
+         b：超时时间 <timeout>（毫秒）到时；
+
+         WAIT命令返回时，不管是正常返回，还是超时返回，返回的结果都是已经确认收到WAIT之前的写命令的从节点个数。
+
+         注意，如果WATI命令在MULTI事务中执行的，那该命令会立即返回已经确认的从节点个数。
+
+         如果timeout置为0，则表示永久等待；
+
+ 
+
+         主节点收到客户端发来的WAIT命令后，调用waitCommand函数处理。该函数的代码如下：
+
+void waitCommand(redisClient *c) {
+    mstime_t timeout;
+    long numreplicas, ackreplicas;
+    long long offset = c->woff;
+
+    /* Argument parsing. */
+    if (getLongFromObjectOrReply(c,c->argv[1],&numreplicas,NULL) != REDIS_OK)
+        return;
+    if (getTimeoutFromObjectOrReply(c,c->argv[2],&timeout,UNIT_MILLISECONDS)
+        != REDIS_OK) return;
+
+    /* First try without blocking at all. */
+    ackreplicas = replicationCountAcksByOffset(c->woff);
+    if (ackreplicas >= numreplicas || c->flags & REDIS_MULTI) {
+        addReplyLongLong(c,ackreplicas);
+        return;
+    }
+
+    /* Otherwise block the client and put it into our list of clients
+     * waiting for ack from slaves. */
+    c->bpop.timeout = timeout;
+    c->bpop.reploffset = offset;
+    c->bpop.numreplicas = numreplicas;
+    listAddNodeTail(server.clients_waiting_acks,c);
+    blockClient(c,REDIS_BLOCKED_WAIT);
+
+    /* Make sure that the server will send an ACK request to all the slaves
+     * before returning to the event loop. */
+    replicationRequestAckFromSlaves();
+}
+         每当客户端的命令被处理后（在processCommand中，调用call函数之后），都会更新c->woff的值为当时的复制偏移量server.master_repl_offset，因此，只要从节点客户端的slave->repl_ack_off属性大于该值，就说明该从节点已经确认了WAIT之前的写命令；
+
+ 
+
+         函数中，首先从命令参数中取出numreplicas和timeout；注意，命令参数中的<timeout>是个相对毫秒值，比如3000等；而这里取出的timeout，会被转换为绝对时间戳；
+
+         接着调用replicationCountAcksByOffset函数，得到当前已经发送来确认的从节点个数ackreplicas；如果ackreplicas大于等于numreplicas，或者当前客户端正在执行MULTI事务处理，则立即返回给客户端ackreplicas信息，并返回；
+
+ 
+
+         其他情况下，将WAIT命令参数，以及offset记录到c->bpop中。然后将该客户端追加到列表server.clients_waiting_acks中；并调用函数blockClient，将客户端标志位阻塞的；
+
+         最后，调用replicationRequestAckFromSlaves，置标志位server.get_ack_from_slaves为1：
+
+    c->bpop.timeout = timeout;
+    c->bpop.reploffset = offset;
+    c->bpop.numreplicas = numreplicas;
+    listAddNodeTail(server.clients_waiting_acks,c);
+    blockClient(c,REDIS_BLOCKED_WAIT);
+
+    /* Make sure that the server will send an ACK request to all the slaves
+     * before returning to the event loop. */
+    replicationRequestAckFromSlaves();
+        
+
+1：超时检查
+
+         在定时执行的函数clientsCronHandleTimeout中，会检查客户端的c->bpop.timeout属性，一旦客户端的bpop.timeout属性小于当前时间戳，说明该客户端的WAIT超时时间到时了，因此会调用replyToBlockedClientTimedOut，向客户端返回当前已发来WAIT确认的从节点个数，并调用unblockClient解除该客户端的阻塞。
+
+ 
+
+2：确认检查
+
+         将server.get_ack_from_slaves属性置为1后，在每次事件处理函数aeProcessEvents调用之前，都会调用的beforeSleep函数中，判断该属性为1后，就会调用函数replicationFeedSlaves，向所有从节点的输出缓存中，以及积压队列中，追加命令"REPLCONF GETACK *"，也就是相当于向从节点发送该命令，然后置server.get_ack_from_slaves为0。从节点收到该命令后，就会向主节点返回"REPLCONF GETACK <offset>"命令。
+
+         beforeSleep中，该部分代码如下：
+
+    /* Send all the slaves an ACK request if at least one client blocked
+     * during the previous event loop iteration. */
+    if (server.get_ack_from_slaves) {
+        robj *argv[3];
+
+        argv[0] = createStringObject("REPLCONF",8);
+        argv[1] = createStringObject("GETACK",6);
+        argv[2] = createStringObject("*",1); /* Not used argument. */
+        replicationFeedSlaves(server.slaves, server.slaveseldb, argv, 3);
+        decrRefCount(argv[0]);
+        decrRefCount(argv[1]);
+        decrRefCount(argv[2]);
+        server.get_ack_from_slaves = 0;
+    }
+
+    /* Unblock all the clients blocked for synchronous replication
+     * in WAIT. */
+    if (listLength(server.clients_waiting_acks))
+        processClientsWaitingReplicas();
+
+    /* Try to process pending commands for clients that were just unblocked. */
+    if (listLength(server.unblocked_clients))
+        processUnblockedClients();
+
+         在beforeSleep中，只要列表server.clients_waiting_acks不为空，就调用函数processClientsWaitingReplicas，找到哪些因WAIT而阻塞的客户端可以解除阻塞了。函数processClientsWaitingReplicas的代码如下：
+
+void processClientsWaitingReplicas(void) {
+    long long last_offset = 0;
+    int last_numreplicas = 0;
+
+    listIter li;
+    listNode *ln;
+
+    listRewind(server.clients_waiting_acks,&li);
+    while((ln = listNext(&li))) {
+        redisClient *c = ln->value;
+
+        /* Every time we find a client that is satisfied for a given
+         * offset and number of replicas, we remember it so the next client
+         * may be unblocked without calling replicationCountAcksByOffset()
+         * if the requested offset / replicas were equal or less. */
+        if (last_offset && last_offset > c->bpop.reploffset &&
+                           last_numreplicas > c->bpop.numreplicas)
+        {
+            unblockClient(c);
+            addReplyLongLong(c,last_numreplicas);
+        } else {
+            int numreplicas = replicationCountAcksByOffset(c->bpop.reploffset);
+
+            if (numreplicas >= c->bpop.numreplicas) {
+                last_offset = c->bpop.reploffset;
+                last_numreplicas = numreplicas;
+                unblockClient(c);
+                addReplyLongLong(c,numreplicas);
+            }
+        }
+    }
+}
+         轮训列表server.clients_waiting_acks，针对其中的每一个客户端：
+
+         调用replicationCountAcksByOffset函数，得到当前复制偏移量大于c->bpop.reploffset的从节点个数numreplicas，如果numreplicas大于该客户端的c->bpop.numreplicas属性，说明该客户端的WAIT命令可以接触阻塞了，因此调用unblockClient解除该客户端的阻塞，并回复给该客户端numreplicas信息；
+
+         并且，将numreplicas记录到last_numreplicas中，将刚接触阻塞的客户端的c->bpop.reploffset属性记录到last_offset中。这样，当后续轮训其他客户端时，只要last_numreplicas大于该客户端的c->bpop.numreplicas，并且last_offset大于客户端的c->bpop.reploffset，说明该客户端也满足解除WAIT阻塞的条件，因此可以无需调用replicationCountAcksByOffset函数，而直接调用unblockClient解除该客户端的阻塞，并回复给该客户端numreplicas信息。
+
+
+
