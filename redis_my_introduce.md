@@ -251,8 +251,48 @@ st->sentinelCheckTiltCondition->sentinelHandleDictOfRedisInstances->sentinelHand
 ```
 
 ##集群逻辑
-```flow
+每100毫秒执行一次 clusterCron
 
+```flow
+st=>start: 开始 CLUSTER MEET <ip> <port>
+clusterStartHandshake=>operation: 握手加入集群
+createClusterNode=>operation: 初始化集群节点
+clusterCronSendMeet=>operation: clusterCron发送CLUSTERMSG_TYPE_MEET
+clusterProcessPacketReceiveMeet=>operation: clusterProcessPacket收到CLUSTERMSG_TYPE_MEET,被邀请节点创建邀请节点，回复CLUSTERMSG_TYPE_PONG
+clusterProcessPacketReceivePong=>operation: clusterProcessPacket收到CLUSTERMSG_TYPE_PONG,更新节点名字，置状态
+clusterCronSendPing=>operation: 被邀请节点clusterCron发送CLUSTERMSG_TYPE_PING
+clusterProcessPacketReceivePing=>operation: clusterProcessPacket收到CLUSTERMSG_TYPE_PING,邀请节点回复CLUSTERMSG_TYPE_PONG
+clusterProcessPacketReceivePong2=>operation: clusterProcessPacket被邀请节点收到CLUSTERMSG_TYPE_PONG,更新节点名字，置状态
+
+st->clusterStartHandshake->createClusterNode->clusterCronSendMeet->clusterProcessPacketReceiveMeet->clusterProcessPacketReceivePong->clusterCronSendPing->clusterProcessPacketReceivePing->clusterProcessPacketReceivePong2
+```
+
+```flow
+st=>start: 下线检测
+clusterCronSendPing=>operation: 从这5个随机节点中，挑选出最早收到PONG回复的那个节点，向其发送PING包
+clusterCronCheckPong=>operation: cluster_node_timeout超时，标记为PFAIL
+clusterProcessGossipSection=>operation: 解析gossip，如果是新节点就开始握手，如果是PFAIL增加fail_reports个数
+markNodeAsFailingIfNeeded=>operation: 节点node标记为下线(FAIL)
+clusterProcessPacket=>operation: 其他节点收到FAIL包后,标记为下线(FAIL)
+
+st->clusterCronSendPing->clusterCronCheckPong->clusterProcessGossipSection->markNodeAsFailingIfNeeded->clusterProcessPacket
+```
+
+```flow
+st=>start: 故障迁移
+clusterHandleSlaveFailover=>operation: 检查能否开始故障迁移
+clusterRequestFailoverAuth=>operation: 向所有集群节点发送CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST包用于拉票
+clusterSendFailoverAuthIfNeeded=>operation: 主节点投票
+clusterProcessPacket=>operation: CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK统计投票
+clusterHandleSlaveFailover2=>operation: 收到大部分主节点的投票开始迁移
+clusterFailoverReplaceYourMaster=>operation: 取代下线主节点，成为新的主节点，并向其他节点广播这种变化
+clusterSetNodeAsMaster=>operation: 当前从节点从其主节点的slaves数组中删除, 设置为集群中主节点
+replicationUnsetMaster=>operation: 取消主从复制过程，将当前节点升级为主节点
+clusterBroadcastPong=>operation: 使得"当前节点成为新主节点并接手相应槽位"的消息，尽快通知给其他节点
+clusterProcessPacket2=>operation: 处理clusterBroadcastPong
+clusterUpdateSlotsConfigWith=>operation: 槽位更新
+
+st->clusterHandleSlaveFailover->clusterRequestFailoverAuth->clusterSendFailoverAuthIfNeeded->clusterProcessPacket->clusterHandleSlaveFailover2->clusterFailoverReplaceYourMaster->clusterSetNodeAsMaster->replicationUnsetMaster->clusterBroadcastPong->clusterProcessPacket2->clusterUpdateSlotsConfigWith
 ```
 
 

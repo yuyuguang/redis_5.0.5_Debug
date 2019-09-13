@@ -51,55 +51,10 @@
   <component name="FileEditorManager">
     <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
       <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/cluster.h">
+        <entry file="file://$PROJECT_DIR$/src/sentinel.c">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="300">
-              <caret line="150" column="61" lean-forward="true" selection-start-line="150" selection-start-column="61" selection-end-line="150" selection-end-column="61" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="true">
-        <entry file="file://$PROJECT_DIR$/src/cluster.c">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="358">
-              <caret line="1081" column="34" selection-start-line="1081" selection-start-column="28" selection-end-line="1081" selection-end-column="34" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/db.c">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="215">
-              <caret line="1525" column="13" selection-start-line="1525" selection-start-column="13" selection-end-line="1525" selection-end-column="13" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/dict.h">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="422">
-              <caret line="87" column="14" selection-start-line="87" selection-start-column="8" selection-end-line="87" selection-end-column="14" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/replication.c">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="200">
-              <caret line="2518" column="10" selection-start-line="2518" selection-start-column="10" selection-end-line="2518" selection-end-column="10" />
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/networking.c">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="210">
-              <caret line="2180" column="5" selection-start-line="2180" selection-start-column="5" selection-end-line="2180" selection-end-column="5" />
+            <state relative-caret-position="253">
+              <caret line="4513" column="9" selection-start-line="4513" selection-start-column="9" selection-end-line="4513" selection-end-column="9" />
             </state>
           </provider>
         </entry>
@@ -107,17 +62,38 @@
       <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/src/server.h">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="217">
-              <caret line="1244" column="8" selection-start-line="1244" selection-start-column="8" selection-end-line="1244" selection-end-column="8" />
+            <state relative-caret-position="207">
+              <caret line="1885" column="18" selection-start-line="1885" selection-start-column="5" selection-end-line="1885" selection-end-column="18" />
+              <folding>
+                <element signature="e#2052#2111#0" expanded="true" />
+              </folding>
             </state>
           </provider>
         </entry>
       </file>
       <file pinned="false" current-in-tab="false">
-        <entry file="file://$PROJECT_DIR$/src/dict.c">
+        <entry file="file://$PROJECT_DIR$/src/server.c">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="322">
-              <caret line="622" column="70" lean-forward="true" selection-start-line="622" selection-start-column="70" selection-end-line="622" selection-end-column="70" />
+            <state relative-caret-position="131">
+              <caret line="1326" column="45" lean-forward="true" selection-start-line="1326" selection-start-column="45" selection-end-line="1326" selection-end-column="45" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="true">
+        <entry file="file://$PROJECT_DIR$/src/cluster.c">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="76">
+              <caret line="2663" column="5" selection-start-line="2663" selection-start-column="5" selection-end-line="2663" selection-end-column="5" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/cluster.h">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="222">
+              <caret line="157" column="8" selection-start-line="157" selection-start-column="8" selection-end-line="157" selection-end-column="8" />
             </state>
           </provider>
         </entry>
@@ -126,22 +102,7 @@
   </component>
   <component name="FindInProjectRecents">
     <findStrings>
-      <find>migrate</find>
-      <find>clusterCron</find>
-      <find>clusterSendPing</find>
-      <find>clusterFailoverReplaceYourMaster</find>
-      <find>dict</find>
-      <find>clusterProcessGossipSection</find>
-      <find>if (nodeIsSlave(myself)) {</find>
-      <find>clusterBroadcastPong</find>
-      <find>strcasecmp(c-&gt;argv[1]-&gt;ptr,&quot;replicate</find>
-      <find>replicationSetMaster</find>
-      <find>currentEpoch</find>
-      <find>clusterGetSlaveRank</find>
-      <find>CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST</find>
-      <find>CLUSTERMSG_TYPE_FAILOVER_AUTH_ACK</find>
       <find>CLUSTER_TODO_HANDLE_FAILOVER</find>
-      <find>CLUSTERMSG_TYPE_PONG</find>
       <find>CLUSTERMSG_TYPE_UPDATE</find>
       <find>newmaster</find>
       <find>&quot;FAILOVER&quot;</find>
@@ -150,12 +111,27 @@
       <find>repl_offset</find>
       <find>mf_master_offset</find>
       <find>CLUSTERMSG_FLAG0_PAUSED</find>
-      <find>clusterHandleSlaveFailover</find>
       <find>mf_can_start</find>
       <find>manual_failover</find>
       <find>CLUSTERMSG_TYPE_MFSTART</find>
       <find>mf_can_start =</find>
       <find>cluster_migration_barrier</find>
+      <find>fore</find>
+      <find>meet&quot;</find>
+      <find>clusterCron</find>
+      <find>CLUSTER_NODE_MEET</find>
+      <find>CLUSTERMSG_TYPE_MEET</find>
+      <find>&quot;meet&quot;</find>
+      <find>CLUSTERMSG_TYPE_PING</find>
+      <find>CLUSTERMSG_TYPE_PONG</find>
+      <find>ictGetSafeIterator(server.cluster-&gt;node</find>
+      <find>clusterProcessGossipSection</find>
+      <find>CLUSTERMSG_TYPE_FAIL</find>
+      <find>CLUSTER_MODULE_FLAG_NO_FAILOVER</find>
+      <find>cluster_module_flags</find>
+      <find>CLUSTERMSG_TYPE_FAILOVER_AUTH_REQUEST</find>
+      <find>clusterHandleSlaveFailover</find>
+      <find>clustercron</find>
     </findStrings>
   </component>
   <component name="Git.Settings">
@@ -170,7 +146,7 @@
     </option>
   </component>
   <component name="OCFindUsagesOptions" text="true" ivars="false" properties="true" derivedClasses="false" />
-  <component name="ProjectFrameBounds" extendedState="1">
+  <component name="ProjectFrameBounds">
     <option name="x" value="37" />
     <option name="y" value="23" />
     <option name="width" value="1358" />
@@ -317,7 +293,7 @@
     <frame x="37" y="23" width="1358" height="787" extended-state="0" />
     <editor active="true" />
     <layout>
-      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.08738602" />
+      <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.17173253" />
       <window_info id="Structure" order="1" side_tool="true" weight="0.25" />
       <window_info id="Favorites" order="2" side_tool="true" />
       <window_info anchor="bottom" id="Message" order="0" />
@@ -508,11 +484,6 @@
           <option name="timeStamp" value="54" />
         </line-breakpoint>
         <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
-          <url>file://$PROJECT_DIR$/src/sentinel.c</url>
-          <line>4504</line>
-          <option name="timeStamp" value="55" />
-        </line-breakpoint>
-        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
           <url>file://$PROJECT_DIR$/src/cluster.c</url>
           <line>5485</line>
           <option name="timeStamp" value="68" />
@@ -593,13 +564,6 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/src/server.c">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="200">
-          <caret line="278" column="13" selection-start-line="278" selection-start-column="6" selection-end-line="278" selection-end-column="13" />
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/deps/hiredis/dict.c">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="215">
@@ -618,20 +582,6 @@
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="422">
           <caret line="87" column="14" selection-start-line="87" selection-start-column="8" selection-end-line="87" selection-end-column="14" />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/src/cluster.h">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="300">
-          <caret line="150" column="61" lean-forward="true" selection-start-line="150" selection-start-column="61" selection-end-line="150" selection-end-column="61" />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/src/server.h">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="217">
-          <caret line="1244" column="8" selection-start-line="1244" selection-start-column="8" selection-end-line="1244" selection-end-column="8" />
         </state>
       </provider>
     </entry>
@@ -663,10 +613,41 @@
         </state>
       </provider>
     </entry>
+    <entry file="file://$PROJECT_DIR$/src/server.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="131">
+          <caret line="1326" column="45" lean-forward="true" selection-start-line="1326" selection-start-column="45" selection-end-line="1326" selection-end-column="45" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/server.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="207">
+          <caret line="1885" column="18" selection-start-line="1885" selection-start-column="5" selection-end-line="1885" selection-end-column="18" />
+          <folding>
+            <element signature="e#2052#2111#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/sentinel.c">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="253">
+          <caret line="4513" column="9" selection-start-line="4513" selection-start-column="9" selection-end-line="4513" selection-end-column="9" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/cluster.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="222">
+          <caret line="157" column="8" selection-start-line="157" selection-start-column="8" selection-end-line="157" selection-end-column="8" />
+        </state>
+      </provider>
+    </entry>
     <entry file="file://$PROJECT_DIR$/src/cluster.c">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="358">
-          <caret line="1081" column="34" selection-start-line="1081" selection-start-column="28" selection-end-line="1081" selection-end-column="34" />
+        <state relative-caret-position="76">
+          <caret line="2663" column="5" selection-start-line="2663" selection-start-column="5" selection-end-line="2663" selection-end-column="5" />
         </state>
       </provider>
     </entry>
